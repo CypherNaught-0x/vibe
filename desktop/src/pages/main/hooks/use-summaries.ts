@@ -40,6 +40,16 @@ export function shouldAutoSummarize(job: Pick<Job, 'status' | 'hydrated' | 'summ
 	return previousStatus !== undefined && previousStatus !== 'done' && job.status === 'done' && !job.hydrated && !job.summary && job.segments.length > 0
 }
 
+/**
+ * "Delete original transcript after AI processing" only does anything once a summary exists, so a
+ * fresh recording is summarized by itself. A live recording arrives already finished (hydrated),
+ * a file-based one through the usual transition to done; opened projects are never touched.
+ */
+export function shouldSummarizeForPrivacy(job: Pick<Job, 'status' | 'hydrated' | 'summary' | 'segments' | 'source' | 'transcriptDeleted'>, previousStatus?: Job['status']) {
+	if (job.source !== 'record' || job.status !== 'done' || job.summary || job.transcriptDeleted || !job.segments.length) return false
+	return job.hydrated ? previousStatus === undefined : previousStatus !== undefined && previousStatus !== 'done'
+}
+
 /** Summarize the partial summaries; the model sees them as the transcript so the user's prompt still applies. */
 function joinParts(parts: string[]) {
 	return parts.map((part, index) => `--- Part ${index + 1} of ${parts.length} ---\n${part}`).join('\n\n')
@@ -87,6 +97,7 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 	const { connection, tasks } = preference.ai
 	const task = tasks.summary
 	const enabled = task.enabled
+	const deleteAfterAi = preference.deleteTranscriptAfterAi
 	const client = useMemo<AiClient>(() => createClient(connection), [connection])
 
 	const transcriptOf = useCallback(
@@ -220,25 +231,28 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 	// Auto-run only on a real status transition in this session. Turning the setting on later must
 	// not sweep over already-finished work, and hydrated projects are always manual-only.
 	useEffect(() => {
-		const completed: Job[] = []
+		const completed: { job: Job; privacy: boolean }[] = []
 		const liveIds = new Set<string>()
 		for (const job of queue.jobs) {
 			liveIds.add(job.id)
 			const previous = previousStatuses.current.get(job.id)
-			if (shouldAutoSummarize(job, previous)) completed.push(job)
+			const auto = shouldAutoSummarize(job, previous)
+			const privacy = shouldSummarizeForPrivacy(job, previous)
+			if (auto || privacy) completed.push({ job, privacy })
 			previousStatuses.current.set(job.id, job.status)
 		}
 		for (const id of previousStatuses.current.keys()) {
 			if (!liveIds.has(id)) previousStatuses.current.delete(id)
 		}
 
-		if (!enabled || !task.autoOnFinish) return
-		for (const job of completed) {
+		if (!enabled) return
+		for (const { job, privacy } of completed) {
+			if (!task.autoOnFinish && !(deleteAfterAi && privacy)) continue
 			if (autoAttempted.current.has(job.id)) continue
 			autoAttempted.current.add(job.id)
 			void summarize(job)
 		}
-	}, [enabled, task.autoOnFinish, queue.jobs, summarize])
+	}, [enabled, task.autoOnFinish, deleteAfterAi, queue.jobs, summarize])
 
 	const clearShowSummary = useCallback(() => setShowSummary(null), [])
 

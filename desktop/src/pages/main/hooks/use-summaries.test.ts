@@ -4,7 +4,7 @@ import { act, cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFAULT_AI, type AiSettings } from '~/lib/ai'
 import type { Job, TranscribeQueue } from './use-transcribe-queue'
-import { shouldAutoSummarize, useSummaries } from './use-summaries'
+import { shouldAutoSummarize, shouldSummarizeForPrivacy, useSummaries } from './use-summaries'
 
 const client = vi.hoisted(() => ({
 	ask: vi.fn(),
@@ -52,6 +52,22 @@ describe('automatic summaries', () => {
 		expect(shouldAutoSummarize(completed({ hydrated: true }), 'running')).toBe(false)
 		expect(shouldAutoSummarize(completed({ segments: [] }), 'running')).toBe(false)
 		expect(shouldAutoSummarize(completed({ summary: 'Existing' }), 'running')).toBe(false)
+	})
+})
+
+describe('summaries for the delete-original-transcript option', () => {
+	const recording = (overrides: Partial<Job> = {}) => makeJob({ source: 'record', ...overrides })
+
+	it('covers a finished live recording and a file recording that just completed', () => {
+		expect(shouldSummarizeForPrivacy(recording({ hydrated: true }), undefined)).toBe(true)
+		expect(shouldSummarizeForPrivacy(recording(), 'running')).toBe(true)
+	})
+
+	it('leaves opened projects, other sources and finished work alone', () => {
+		expect(shouldSummarizeForPrivacy(recording({ hydrated: true }), 'done')).toBe(false)
+		expect(shouldSummarizeForPrivacy(makeJob({ hydrated: true }), undefined)).toBe(false)
+		expect(shouldSummarizeForPrivacy(recording({ summary: 'Existing' }), 'running')).toBe(false)
+		expect(shouldSummarizeForPrivacy(recording({ transcriptDeleted: true }), 'running')).toBe(false)
 	})
 })
 
