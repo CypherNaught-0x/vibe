@@ -41,7 +41,7 @@ export default function SummaryView({ job, options }: { job: Job; options: Trans
 	const asking = Boolean(summaries.asking[job.id])
 	const answerDraft = summaries.answerDrafts[job.id]
 	const thread = job.thread ?? []
-	const canAsk = summaries.enabled && job.segments.length > 0
+	const canAsk = summaries.enabled && (job.segments.length > 0 || Boolean(job.transcriptDeleted && job.summary?.trim()))
 
 	// Follow the answer as it grows, the way a chat does: the bottom of the page, padding included,
 	// so the newest line sits above the floating box.

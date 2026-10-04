@@ -291,7 +291,36 @@ async fn read_header(recv: &mut iroh::endpoint::RecvStream) -> Result<HandoffHea
 pub(super) async fn receive_audio(
     recv: &mut iroh::endpoint::RecvStream,
     filename: Option<&str>,
+    no_audio_storage: bool,
 ) -> Result<(PathBuf, u64), TransferError> {
+    if no_audio_storage {
+        let mut audio = Vec::new();
+        let mut buffer = vec![0u8; 64 * 1024];
+        let limit = MAX_AUDIO_BYTES.min(128 * 1024 * 1024);
+        while let Some(read) = recv
+            .read(&mut buffer)
+            .await
+            .map_err(|error| TransferError::new("invalid_request", format!("failed to read audio: {error}")))?
+        {
+            if read == 0 {
+                break;
+            }
+            if audio.len() as u64 + read as u64 > limit {
+                return Err(TransferError::new(
+                    "payload_too_large",
+                    "Private phone audio exceeds the 128 MiB RAM limit",
+                ));
+            }
+            audio.extend_from_slice(&buffer[..read]);
+        }
+        if audio.is_empty() {
+            return Err(TransferError::new("invalid_request", "No audio received"));
+        }
+        let total = audio.len() as u64;
+        let path = crate::private_audio::store_bytes(audio)
+            .map_err(|error| TransferError::new("internal_error", format!("failed to retain private audio: {error}")))?;
+        return Ok((PathBuf::from(path), total));
+    }
     let (path, file) = reserve_recording_file(filename)
         .map_err(|error| TransferError::new("internal_error", format!("failed to pick a save path: {error:#}")))?;
     let mut file = tokio::fs::File::from_std(file);

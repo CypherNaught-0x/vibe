@@ -29,6 +29,11 @@ pub(in crate::server) async fn model_metadata(Json(request): Json<ModelMetadataR
     }
     let path = request.path.clone();
     match tokio::task::spawn_blocking(move || {
+        if path.ends_with(".audio8.json") {
+            return crate::audio8::validate_manifest(&path)
+                .map(|()| crate::audio8::capabilities())
+                .map_err(|err| err.to_string());
+        }
         // Probing a whisper model with the GGUF readers only makes ggml log a
         // magic mismatch, so files that are not GGUF go straight to whisper.
         if !is_gguf(&path) {
@@ -81,7 +86,11 @@ pub(in crate::server) async fn model_metadata(Json(request): Json<ModelMetadataR
         Ok(Ok(capabilities)) => (
             StatusCode::OK,
             Json(ModelMetadataResponse {
-                format: if capabilities.engine == "whisper" { "whisper" } else { "gguf" },
+                format: match capabilities.engine.as_str() {
+                    "whisper" => "whisper",
+                    "audio8" => "audio8",
+                    _ => "gguf",
+                },
                 capabilities,
             }),
         )

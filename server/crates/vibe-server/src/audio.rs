@@ -2,6 +2,14 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod memory;
+
+/// Privacy mode never uses temporary audio files, including during format conversion.
+/// Containers requiring seeking must be converted by the user, not spilled to disk.
+pub fn read_bytes_in_memory(bytes: Vec<u8>, options: ReadOptions) -> anyhow::Result<Vec<f32>> {
+    memory::decode(bytes, options)
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ReadOptions {
     pub enhance_audio: bool,

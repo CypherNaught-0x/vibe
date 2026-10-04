@@ -161,6 +161,10 @@ export function useAudioDownload(transcribe: (paths: string[]) => Promise<void>)
 	 * The box and the list are emptied as soon as the run starts so the next links can go in.
 	 */
 	async function downloadAudio() {
+		if (preference.noAudioStorage) {
+			notify.error(m.privacyUrlDownloadsUnavailable())
+			return
+		}
 		const urls = pendingLinks
 		if (!urls.length) return
 		setAudioUrl('')

@@ -8,8 +8,9 @@ import { KEEP_AWAKE, startKeepAwake, stopKeepAwake } from '~/lib/keep-awake'
 import { ensureSystemAudioPermission } from '~/lib/permissions'
 import { ErrorModalContext } from '~/providers/error-modal'
 import { usePreferenceProvider } from '~/providers/preference'
+import { supportsLiveRecording, useLiveRecording, type LiveRecordingCompletion } from './use-live-recording'
 
-export function useRecording(onBeforeStart: () => void) {
+export function useRecording(onBeforeStart: () => void, onLiveFinished?: LiveRecordingCompletion) {
 	const preference = usePreferenceProvider()
 	const { setState: setErrorModal } = useContext(ErrorModalContext)
 	const [devices, setDevices] = useState<AudioDevice[]>([])
@@ -19,6 +20,8 @@ export function useRecording(onBeforeStart: () => void) {
 	const [outputDevice, setOutputDevice] = useState<AudioDevice | null>(null)
 	const [isRecording, setIsRecording] = useState(false)
 	const [recordingName, setRecordingName] = useState('')
+	const liveRecording = useLiveRecording(onBeforeStart, onLiveFinished)
+	const liveEnabled = preference.liveTranscription && supportsLiveRecording(preference.modelPath)
 
 	function setInputDeviceAndSave(value: SetStateAction<AudioDevice | null>) {
 		const device = typeof value === 'function' ? value(inputDevice) : value
@@ -49,15 +52,22 @@ export function useRecording(onBeforeStart: () => void) {
 	}, [preference.homeTab])
 
 	async function startRecord() {
+		if (liveRecording.isActive()) return
+		const selectedDevices = [inputDevice, outputDevice].filter((device): device is AudioDevice => device !== null)
+		if (liveEnabled) {
+			await liveRecording.start(selectedDevices, recordingName)
+			return
+		}
+		liveRecording.clear()
 		if (outputDevice && !(await ensureSystemAudioPermission())) return
 		startKeepAwake(KEEP_AWAKE.record)
 		onBeforeStart()
 		setIsRecording(true)
-		const selectedDevices = [inputDevice, outputDevice].filter((device): device is AudioDevice => device !== null)
 		try {
 			await invoke('start_record', {
 				devices: selectedDevices,
 				recordingName: recordingName.trim() || null,
+				noAudioStorage: preference.noAudioStorage,
 			})
 		} catch (error) {
 			stopKeepAwake(KEEP_AWAKE.record)
@@ -68,6 +78,10 @@ export function useRecording(onBeforeStart: () => void) {
 	}
 
 	async function stopRecord() {
+		if (liveRecording.isActive()) {
+			await liveRecording.stop()
+			return
+		}
 		try {
 			await emit('stop_record')
 		} catch (error) {
@@ -83,7 +97,12 @@ export function useRecording(onBeforeStart: () => void) {
 		setDevices,
 		inputDevice,
 		outputDevice,
-		isRecording,
+		isRecording: isRecording || liveRecording.isRecording,
+		isLiveRecording: liveRecording.isRecording,
+		isLiveActive: liveRecording.isActive,
+		liveEnabled,
+		live: liveRecording.state,
+		clearLive: liveRecording.clear,
 		setIsRecording,
 		recordingName,
 		setRecordingName,

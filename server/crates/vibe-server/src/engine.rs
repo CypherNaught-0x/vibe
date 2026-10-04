@@ -21,6 +21,7 @@ pub struct EngineCapabilities {
 #[allow(clippy::large_enum_variant)]
 pub enum Engine {
     Whisper(whisper_rs::Context),
+    Audio8(crate::audio8::Model),
     Nemotron {
         model: Box<nemotron_rs::Model>,
         vad: Option<(String, vad_rs::Vad)>,
@@ -37,6 +38,9 @@ impl Engine {
     }
 
     pub fn load(path: &str, options: ContextOptions) -> anyhow::Result<Self> {
+        if path.ends_with(".audio8.json") {
+            return crate::audio8::Model::load(path, options).map(Self::Audio8);
+        }
         if path.ends_with(".gguf") {
             if let Ok(info) = parakeet_rs::Model::metadata(path) {
                 if info.architecture == "parakeet" && info.variant.contains("v3") {
@@ -60,6 +64,7 @@ impl Engine {
     pub fn transcribe(&mut self, samples: &[f32], options: TranscribeOptions) -> anyhow::Result<TranscribeResult> {
         match self {
             Self::Whisper(context) => context.transcribe(samples, options).map_err(Into::into),
+            Self::Audio8(model) => model.transcribe(samples, options, StreamCallbacks::default()),
             Self::Nemotron { model, vad } => {
                 if options.translate {
                     bail!("Nemotron does not support translation");
@@ -125,6 +130,7 @@ impl Engine {
     ) -> anyhow::Result<TranscribeResult> {
         match self {
             Self::Whisper(context) => context.transcribe_stream(samples, options, callbacks).map_err(Into::into),
+            Self::Audio8(model) => model.transcribe(samples, options, callbacks),
             Self::Nemotron { model, vad } => {
                 if options.translate {
                     bail!("Nemotron does not support translation");
@@ -227,6 +233,7 @@ impl Engine {
     pub fn capabilities(&self) -> EngineCapabilities {
         match self {
             Self::Whisper(_) => whisper_capabilities(),
+            Self::Audio8(_) => crate::audio8::capabilities(),
             Self::Nemotron { model, .. } => EngineCapabilities {
                 engine: "nemotron".to_string(),
                 requires_vad: true,

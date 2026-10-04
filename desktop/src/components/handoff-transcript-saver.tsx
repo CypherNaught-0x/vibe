@@ -81,6 +81,7 @@ export default function HandoffTranscriptSaver() {
 				sourcePath,
 				projectsPath: preferenceRef.current.projectsPath,
 				moveSourceMedia: true,
+				noAudioStorage: preferenceRef.current.noAudioStorage,
 				segments,
 				language: payload.language ?? undefined,
 				modelPath: payload.modelPath ?? payload.model_path ?? null,

@@ -69,6 +69,8 @@ function useRecord<T>() {
  */
 export function useSummaries(queue: TranscribeQueue): Summaries {
 	const preference = usePreferenceProvider()
+	const queueRef = useRef(queue)
+	queueRef.current = queue
 	const [pending, setPendingFor, clearPending] = useRecord<boolean>()
 	const [drafts, setDraft, clearDraft] = useRecord<string>()
 	const [progress, setProgressFor, clearProgress] = useRecord<SummaryProgress>()
@@ -87,7 +89,10 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 	const enabled = task.enabled
 	const client = useMemo<AiClient>(() => createClient(connection), [connection])
 
-	const transcriptOf = useCallback((job: Job) => asText(job.segments, m.speakerPrefix(), job.speakerNames), [])
+	const transcriptOf = useCallback(
+		(job: Job) => (job.transcriptDeleted ? (job.summary ?? '') : asText(job.segments, m.speakerPrefix(), job.speakerNames)),
+		[],
+	)
 	const speakersOf = useCallback((job: Job) => Object.values(job.speakerNames ?? {}).join(', '), [])
 
 	const summarize = useCallback(
@@ -108,7 +113,9 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 					const parts: string[] = []
 					for (const [index, chunk] of chunks.entries()) {
 						setProgressFor(job.id, { done: index, total: chunks.length })
-						parts.push((await client.ask(fillPrompt(template, { ...values, transcript: chunk }))).trim())
+						const part = (await client.ask(fillPrompt(template, { ...values, transcript: chunk }))).trim()
+						if (!part) throw new Error(m.summaryFailed())
+						parts.push(part)
 					}
 					setProgressFor(job.id, { done: chunks.length, total: chunks.length })
 					source = joinParts(parts)
@@ -120,12 +127,12 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 				})
 				text = text.trim()
 				if (!text) throw new Error(m.summaryFailed())
-				queue.setJobSummary(job.id, text)
+				if (!(await queue.setJobSummary(job.id, text))) throw new Error('Failed to save AI result; the original transcript was kept.')
 				return true
 			} catch (error) {
 				console.error('summarize failed:', error)
 				setError(job.id, String(error instanceof Error ? error.message : error))
-				toast.error(m.summaryFailed(), { position: 'bottom-center' })
+				toast.error(m.summaryFailed(), { description: String(error instanceof Error ? error.message : error), position: 'bottom-center' })
 				return false
 			} finally {
 				inFlight.current.delete(job.id)
@@ -181,8 +188,10 @@ export function useSummaries(queue: TranscribeQueue): Summaries {
 				})
 				text = text.trim()
 				if (!text) throw new Error(m.summaryFailed())
-				const current = queue.jobs.find((candidate) => candidate.id === job.id)
-				queue.setJobThread(job.id, [...(current?.thread ?? job.thread ?? []), { question: trimmed, answer: text }])
+				const current = queueRef.current.jobs.find((candidate) => candidate.id === job.id)
+				// An answer begun against deleted raw text must not restore its earlier history.
+				if (!current || Boolean(current.transcriptDeleted) !== Boolean(job.transcriptDeleted)) return false
+				queueRef.current.setJobThread(job.id, [...(current.thread ?? []), { question: trimmed, answer: text }])
 				return true
 			} catch (error) {
 				console.error('ask failed:', error)

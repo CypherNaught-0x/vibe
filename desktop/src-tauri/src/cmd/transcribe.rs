@@ -10,6 +10,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
+
 use tauri::{Emitter, Listener, State};
 use tokio::sync::Mutex;
 
@@ -49,6 +50,8 @@ pub struct TranscribeOptions {
     pub diarize_model: Option<String>,
     pub stable_timestamps: Option<bool>,
     pub vad_model: Option<String>,
+    #[serde(default)]
+    pub no_audio_storage: Option<bool>,
 }
 
 pub(crate) const SERVER_DIED: &str = "vibe-server process died during transcription";
@@ -79,25 +82,42 @@ async fn transcribe_error(server_state: &State<'_, Mutex<ServerState>>, error: e
     }
 }
 
+struct AbortListener {
+    app: tauri::AppHandle,
+    id: tauri::EventId,
+}
+impl Drop for AbortListener {
+    fn drop(&mut self) {
+        self.app.unlisten(self.id);
+    }
+}
+
 #[tauri::command]
 pub async fn transcribe(
     app_handle: tauri::AppHandle,
-    options: TranscribeOptions,
+    mut options: TranscribeOptions,
     server_state: State<'_, Mutex<ServerState>>,
 ) -> Result<Transcript, CommandError> {
-    // Validate file exists before attempting transcription
-    let audio_path = PathBuf::from(&options.path);
-    if !audio_path.exists() {
-        return Err(CommandError {
-            code: "invalid_request".to_string(),
-            message: format!("Audio file not found: {}", options.path),
-        });
-    }
-    if !audio_path.is_file() {
-        return Err(CommandError {
-            code: "invalid_request".to_string(),
-            message: format!("Path is not a file: {}", options.path),
-        });
+    let _private_audio = crate::private_audio::Cleanup::new(&options.path)?;
+    let memory = crate::private_audio::is_memory_path(&options.path);
+    options.no_audio_storage =
+        Some(options.no_audio_storage.unwrap_or(false) || memory || crate::private_audio::enabled(&app_handle)?);
+    // Private handles are validated in RAM by Cleanup, never treated as file paths.
+    // Imported files remain read-only even when no-audio-storage is enabled.
+    if !memory {
+        let audio_path = PathBuf::from(&options.path);
+        if !audio_path.exists() {
+            return Err(CommandError {
+                code: "invalid_request".to_string(),
+                message: format!("Audio file not found: {}", options.path),
+            });
+        }
+        if !audio_path.is_file() {
+            return Err(CommandError {
+                code: "invalid_request".to_string(),
+                message: format!("Path is not a file: {}", options.path),
+            });
+        }
     }
 
     let (client, base_url) = {
@@ -112,15 +132,26 @@ pub async fn transcribe(
     let abort_atomic = Arc::new(AtomicBool::new(false));
     let abort_atomic_c = abort_atomic.clone();
 
+    let abort = Arc::new(tokio::sync::Notify::new());
+    let abort_c = abort.clone();
     let app_handle_c = app_handle.clone();
-    app_handle.listen("abort_transcribe", move |_| {
+    let id = app_handle.listen("abort_transcribe", move |_| {
         let _ = set_progress_bar(&app_handle_c, None);
         abort_atomic_c.store(true, Ordering::Relaxed);
+        abort_c.notify_one();
     });
+    let _listener = AbortListener {
+        app: app_handle.clone(),
+        id,
+    };
 
     let start = std::time::Instant::now();
 
-    let stream = match crate::server::ServerProcess::transcribe_stream(&client, &base_url, &options).await {
+    let request = tokio::select! {
+        _ = abort.notified() => return Ok(Transcript { processing_time_sec: 0, segments: Vec::new() }),
+        result = crate::server::ServerProcess::transcribe_stream(&client, &base_url, &options) => result,
+    };
+    let stream = match request {
         Ok(stream) => stream,
         Err(e) => return Err(transcribe_error(&server_state, e).await),
     };
@@ -130,7 +161,11 @@ pub async fn transcribe(
     let mut segments = Vec::new();
     let mut completed = false;
 
-    while let Some(event_result) = stream.next().await {
+    loop {
+        let event_result = tokio::select! {
+            _ = abort.notified() => break,
+            event = stream.next() => match event { Some(event) => event, None => break },
+        };
         if abort_atomic.load(Ordering::Relaxed) {
             tracing::debug!("transcription aborted by user");
             break;

@@ -44,6 +44,25 @@ fn has_matching_extension(path: &Path, patterns: &[String]) -> bool {
         .any(|pattern| pattern.trim_start_matches('.').eq_ignore_ascii_case(extension))
 }
 
+/// Audio8 descriptors are small JSON files, not GGML/GGUF weights. Keep their strict validation
+/// separate so adding one to the model picker does not mark it as a truncated weight download.
+#[tauri::command]
+pub fn check_audio8_model_files(paths: Vec<String>) -> Vec<super::download::ModelFileCheck> {
+    paths
+        .into_iter()
+        .map(|path| {
+            let size = std::fs::metadata(&path).map(|metadata| metadata.len()).unwrap_or(0);
+            let result = super::audio8::validate_model_marker(Path::new(&path));
+            super::download::ModelFileCheck {
+                path,
+                valid: result.is_ok(),
+                size,
+                reason: result.err().map(|error| error.to_string()),
+            }
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub fn get_path_dst(src: String, suffix: String) -> CommandResult<String> {
     let src = PathBuf::from(src);

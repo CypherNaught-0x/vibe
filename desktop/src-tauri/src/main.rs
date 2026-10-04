@@ -13,8 +13,10 @@ mod error;
 mod ffmpeg;
 mod handoff;
 mod keepawake;
+mod live_capture;
 mod logging;
 mod meeting_prompt;
+mod private_audio;
 mod server;
 mod setup;
 mod transcript;
@@ -113,6 +115,7 @@ async fn main() -> Result<()> {
             cmd::files::pick_media_paths,
             cmd::download::download_model,
             cmd::download::check_model_files,
+            cmd::files::check_audio8_model_files,
             cmd::download::cleanup_partial_downloads,
             cmd::server_cmd::load_model,
             cmd::server_cmd::get_gpu_devices,
@@ -132,6 +135,9 @@ async fn main() -> Result<()> {
             cmd::files::get_default_projects_path,
             cmd::audio::get_audio_devices,
             cmd::audio::start_record,
+            cmd::live::start_live_recording,
+            private_audio::discard_private_audio,
+            cmd::audio8::add_audio8_model,
             cmd::app::get_models_folder,
             cmd::app::get_logs_folder,
             cmd::app::show_log_path,
@@ -180,6 +186,7 @@ async fn main() -> Result<()> {
             }
         }
         tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+            cmd::live::cancel_live_recording();
             // Both events fire on a normal quit (and the tray's `app.exit(0)` bypasses the
             // webview entirely), so report the clean exit exactly once, from whichever
             // arrives first. Nothing here prevents the exit, so this is never a false signal.

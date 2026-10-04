@@ -1,4 +1,5 @@
 mod audio;
+mod audio8;
 mod cli;
 mod engine;
 mod parent;

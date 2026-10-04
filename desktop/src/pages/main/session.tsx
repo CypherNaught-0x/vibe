@@ -10,6 +10,7 @@ import * as config from '~/lib/config'
 import { pathToNamedPath } from '~/lib/fs'
 import { cleanupPartialDownloads, listInstalledModels, type InstalledModel } from '~/lib/model'
 import { autoProjectName } from '~/lib/project-name'
+import { discardPrivateAudio, isPrivateAudioPath } from '~/lib/privacy'
 import { notifyTranscriptsChanged, saveTranscript, TRANSCRIPT_VERSION, type TranscriptRecord } from '~/lib/transcripts-store'
 import type { NamedPath, ProjectSource } from '~/lib/types'
 import { useConfirmExit } from '~/lib/use-confirm-exit'
@@ -22,6 +23,7 @@ import { useRecording } from '~/pages/home/hooks/use-recording'
 import { useDropTarget } from './hooks/use-drop-target'
 import { useSummaries, type Summaries } from './hooks/use-summaries'
 import { useTranscribeQueue, type TranscribeQueue } from './hooks/use-transcribe-queue'
+import { useLiveRecordingProject } from './hooks/use-live-recording-project'
 
 export type SessionMode = 'idle' | 'working' | 'done'
 export type IdlePanel = 'none' | 'record' | 'link'
@@ -127,7 +129,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		[enqueuePaths],
 	)
 
-	const manualRecording = useRecording(() => setPanel('record'))
+	const completeLiveRecording = useLiveRecordingProject(queue, () => setPanel('none'))
+	const manualRecording = useRecording(() => setPanel('record'), completeLiveRecording)
+	const isLiveActiveRef = useRef(manualRecording.isLiveActive)
+	isLiveActiveRef.current = manualRecording.isLiveActive
 	const recording = useMemo(
 		() => ({ ...manualRecording, isRecording: manualRecording.isRecording || recordingShortcut.isShortcutRecording }),
 		[manualRecording, recordingShortcut.isShortcutRecording],
@@ -143,22 +148,26 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		if (recordingShortcut.isShortcutRecording) setPanel('record')
 	}, [recordingShortcut.isShortcutRecording])
 
+	const liveStartedAt = recording.isLiveRecording ? recording.live?.startedAt : null
+	const liveStoppedAt = recording.isLiveRecording ? recording.live?.stoppedAt : null
 	useEffect(() => {
-		if (!recording.isRecording) {
+		if (!recording.isRecording || (recording.isLiveRecording && !liveStartedAt)) {
 			setRecordElapsed(0)
 			return
 		}
-		setRecordElapsed(0)
-		const startedAt = Date.now()
-		const timer = window.setInterval(() => setRecordElapsed(Math.floor((Date.now() - startedAt) / 1000)), 500)
+		const startedAt = liveStartedAt ?? Date.now()
+		const tick = () => setRecordElapsed(Math.max(0, Math.floor(((liveStoppedAt ?? Date.now()) - startedAt) / 1000)))
+		tick()
+		if (liveStoppedAt) return
+		const timer = window.setInterval(tick, 500)
 		return () => window.clearInterval(timer)
-	}, [recording.isRecording])
+	}, [recording.isRecording, recording.isLiveRecording, liveStartedAt, liveStoppedAt])
 
 	// A recording becomes a durable project first. Transcription is an optional second step which
 	// updates that same project, so a failed/disabled transcription never costs the user the audio.
 	useEffect(() => {
 		const unlisten: Promise<UnlistenFn> = listen<{ path: string; name: string; warning?: string }>('record_finish', async ({ payload }) => {
-			if (hotkeyRecordingActive) return
+			if (hotkeyRecordingActive || isLiveActiveRef.current()) return
 			recording.setIsRecording(false)
 			setPanel('none')
 			if (payload.warning) toast.warning(m.recordingRecoveredWarning(), { description: payload.warning, position: 'bottom-center' })
@@ -166,35 +175,43 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			const { preference: current, hydrate, transcribeJob } = recordingCompletionRef.current
 			const name = autoProjectName(payload.name, 'record')
 			const createdAt = new Date()
-			const saved = await saveTranscript({
-				name,
-				sourcePath: payload.path,
-				projectsPath: current.projectsPath,
-				moveSourceMedia: true,
-				segments: [],
-				language: current.modelOptions.lang,
-				modelPath: current.modelPath,
-				createdAt,
-			})
-			if (!saved) {
-				const message = `Failed to save recording project; the recording remains at ${payload.path}`
+			const privateAudio = isPrivateAudioPath(payload.path)
+			const saved =
+				privateAudio && !current.saveTranscripts
+					? null
+					: await saveTranscript({
+							name,
+							sourcePath: payload.path,
+							projectsPath: current.projectsPath,
+							moveSourceMedia: true,
+							noAudioStorage: current.noAudioStorage,
+							segments: [],
+							language: current.modelOptions.lang,
+							modelPath: current.modelPath,
+							createdAt,
+						})
+			if (!saved && (!privateAudio || current.saveTranscripts)) {
+				const message = privateAudio
+					? 'Failed to save recording project; the recording remains in memory.'
+					: `Failed to save recording project; the recording remains at ${payload.path}`
 				console.error(message)
 				toast.error(m.error(), { description: message, position: 'bottom-center' })
-				return
+				if (!privateAudio) return
 			}
 
 			const record: TranscriptRecord = {
 				version: TRANSCRIPT_VERSION,
 				name,
-				sourcePath: saved.mediaPath,
+				sourcePath: privateAudio ? payload.path : saved!.mediaPath,
 				createdAt: createdAt.toISOString(),
 				language: current.modelOptions.lang,
 				modelPath: current.modelPath,
 				segments: [],
 			}
-			const jobId = hydrate(record, saved.recordPath, saved.mediaPath, 'record')
-			notifyTranscriptsChanged()
+			const jobId = hydrate(record, saved?.recordPath ?? '', privateAudio ? payload.path : saved?.mediaPath, 'record')
+			if (saved) notifyTranscriptsChanged()
 			if (current.autoTranscribeAfterRecording && jobId) transcribeJob(jobId)
+			if (!jobId && privateAudio) await discardPrivateAudio(payload.path)
 		})
 		return () => {
 			unlisten.then((fn) => fn())
@@ -203,7 +220,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
 	useEffect(() => {
 		const unlisten: Promise<UnlistenFn> = listen<string | { message?: string }>('record_error', ({ payload }) => {
-			if (hotkeyRecordingActive) return
+			if (hotkeyRecordingActive || isLiveActiveRef.current()) return
 			const message = typeof payload === 'string' ? payload : payload?.message || m.error()
 			recording.setIsRecording(false)
 			setPanel('none')
@@ -238,9 +255,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	}, [enqueuePaths])
 
 	const startNew = useCallback(() => {
+		if (recording.isLiveActive()) return
 		queue.reset()
+		recording.clearLive()
 		setPanel('none')
-	}, [queue])
+	}, [queue, recording.clearLive, recording.isLiveActive])
 
 	// Same guards the old home page ran on mount.
 	useEffect(() => {
@@ -306,10 +325,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	// Results persist the moment they exist, so closing only warns when something would
 	// actually be lost: a run in flight, or finished results that never reached disk
 	// (saving disabled or failed).
-	const hasUnsavedResults = queue.jobs.some((job) => job.status === 'done' && !job.hydrated && !job.savedPath)
-	useConfirmExit(preference.closeToTray, queue.running || hasUnsavedResults)
+	const hasUnsavedResults = queue.jobs.some((job) => job.status === 'done' && !job.savedPath && (!job.hydrated || (job.source === 'record' && !job.path)))
+	const hasLiveError = recording.live?.phase === 'error'
+	const hasLiveText = !!recording.live?.segments.length || !!recording.live?.partial
+	useConfirmExit(preference.closeToTray, queue.running || hasUnsavedResults || recording.isLiveRecording || (hasLiveError && hasLiveText))
 
-	const mode: SessionMode = queue.jobs.length === 0 ? 'idle' : queue.running || queue.jobs.some((job) => job.status === 'queued') ? 'working' : 'done'
+	const mode: SessionMode =
+		recording.isLiveRecording || queue.jobs.length === 0 ? 'idle' : queue.running || queue.jobs.some((job) => job.status === 'queued') ? 'working' : 'done'
 
 	const value = useMemo<Session>(
 		() => ({

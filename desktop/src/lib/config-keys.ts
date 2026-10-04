@@ -43,6 +43,10 @@ export const CONFIG_KEYS = {
 	/** Export every finished transcript automatically: formats, destination, replace rule. */
 	autoExport: 'transcription.autoExport',
 
+	// Privacy — opt-in; existing installations retain their behaviour.
+	noAudioStorage: 'privacy.noAudioStorage',
+	deleteTranscriptAfterAi: 'privacy.deleteTranscriptAfterAi',
+
 	// Recording
 	inputDeviceId: 'recording.inputDeviceId',
 	outputDeviceId: 'recording.outputDeviceId',
@@ -50,6 +54,7 @@ export const CONFIG_KEYS = {
 	recordingShortcut: 'recording.shortcut',
 	meetingDetectionEnabled: 'recording.meetingDetectionEnabled',
 	autoTranscribeAfterRecording: 'recording.autoTranscribeAfterRecording',
+	liveTranscription: 'recording.liveTranscription',
 
 	// Reading the transcript
 	textAreaDirection: 'transcript.textDirection',

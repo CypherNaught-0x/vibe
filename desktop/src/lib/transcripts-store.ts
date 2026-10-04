@@ -1,6 +1,7 @@
 import * as pathApi from '@tauri-apps/api/path'
 import * as fs from '@tauri-apps/plugin-fs'
 import type { Segment, SpeakerNames } from './transcript'
+import { createSerialExecutor, isPrivateAudioPath } from './privacy'
 
 /**
  * Transcript persistence.
@@ -40,6 +41,8 @@ export interface TranscriptRecord {
 	speakerNames?: SpeakerNames
 	/** Last AI summary of this transcript, when one was made. */
 	summary?: string
+	/** Raw text was intentionally redacted after a successful AI task. */
+	transcriptDeleted?: boolean
 	/** Questions asked about this transcript and the model's answers, oldest first. */
 	thread?: AiThreadEntry[]
 }
@@ -76,6 +79,8 @@ export interface SaveTranscriptInput {
 	projectsPath?: string | null
 	/** Vibe-created media is removed only after its project copy and metadata are durable. */
 	moveSourceMedia?: boolean
+	/** Never make a media copy, including for imported sources. */
+	noAudioStorage?: boolean
 	segments: Segment[]
 	language?: string
 	modelPath?: string | null
@@ -181,12 +186,12 @@ function serialize(record: TranscriptRecord) {
 let temporaryFileCounter = 0
 
 /** Publish a complete JSON record without exposing a partially written target. */
-async function writeRecordAtomic(target: string, record: TranscriptRecord) {
+async function writeRecordAtomic(target: string, record: TranscriptRecord, requireBackupCleanup = false) {
 	temporaryFileCounter += 1
 	const temporary = `${target}.tmp-${Date.now()}-${temporaryFileCounter}`
 	const backup = `${target}.bak-${Date.now()}-${temporaryFileCounter}`
-	await fs.writeTextFile(temporary, serialize(record))
 	try {
+		await fs.writeTextFile(temporary, serialize(record))
 		try {
 			await fs.rename(temporary, target)
 			return
@@ -210,6 +215,17 @@ async function writeRecordAtomic(target: string, record: TranscriptRecord) {
 		try {
 			await fs.remove(backup)
 		} catch (error) {
+			if (requireBackupCleanup) {
+				// A raw-text backup is not a successful deletion. Restore the last durable original
+				// where possible; either way report failure rather than clearing the user's RAM copy.
+				try {
+					await fs.rename(target, temporary)
+					await fs.rename(backup, target)
+				} catch (rollbackError) {
+					console.error('failed to restore transcript after backup cleanup failure:', rollbackError)
+				}
+				throw error
+			}
 			console.warn('failed to remove transcript metadata backup:', backup, error)
 		}
 	} finally {
@@ -273,10 +289,12 @@ export async function saveTranscript(input: SaveTranscriptInput): Promise<SaveTr
 		const folder = await transcriptsFolder(input.projectsPath)
 		projectFolder = await reserveProjectFolder(folder, input.name, createdAt)
 		const target = await pathApi.join(projectFolder, TRANSCRIPT_FILENAME)
+		const skipAudio = input.noAudioStorage || isPrivateAudioPath(input.sourcePath)
+		const sourcePath = isPrivateAudioPath(input.sourcePath) || (input.noAudioStorage && input.moveSourceMedia) ? '' : input.sourcePath
 		const baseRecord: TranscriptRecord = {
 			version: TRANSCRIPT_VERSION,
 			name: input.name,
-			sourcePath: input.sourcePath,
+			sourcePath,
 			createdAt: createdAt.toISOString(),
 			language: input.language,
 			modelPath: input.modelPath ?? null,
@@ -285,12 +303,12 @@ export async function saveTranscript(input: SaveTranscriptInput): Promise<SaveTr
 
 		let media: { audioFile: string; path: string } | undefined
 		try {
-			media = await copySourceMedia(projectFolder, input.sourcePath)
+			if (!skipAudio) media = await copySourceMedia(projectFolder, input.sourcePath)
 		} catch (error) {
 			if (input.moveSourceMedia) throw error
 			console.warn('failed to copy imported media; saving its external source path:', input.sourcePath, error)
 		}
-		if (input.moveSourceMedia && !media) throw new Error(`Vibe-created media has no usable extension: ${input.sourcePath}`)
+		if (input.moveSourceMedia && !skipAudio && !media) throw new Error(`Vibe-created media has no usable extension: ${input.sourcePath}`)
 
 		const record: TranscriptRecord = {
 			...baseRecord,
@@ -299,7 +317,7 @@ export async function saveTranscript(input: SaveTranscriptInput): Promise<SaveTr
 		}
 		await writeRecordAtomic(target, record)
 
-		if (input.moveSourceMedia) {
+		if (input.moveSourceMedia && input.sourcePath && !isPrivateAudioPath(input.sourcePath)) {
 			try {
 				await fs.remove(input.sourcePath)
 			} catch (error) {
@@ -307,7 +325,7 @@ export async function saveTranscript(input: SaveTranscriptInput): Promise<SaveTr
 				console.warn('failed to remove staged media after publishing its project:', input.sourcePath, error)
 			}
 		}
-		return { recordPath: target, mediaPath: media?.path ?? input.sourcePath }
+		return { recordPath: target, mediaPath: media?.path ?? sourcePath }
 	} catch (error) {
 		console.warn('failed to save transcript:', error)
 		if (projectFolder) await removeFolderBestEffort(projectFolder)
@@ -362,10 +380,14 @@ export async function readTranscript(path: string): Promise<TranscriptRecord | n
 			language: typeof parsed.language === 'string' ? parsed.language : undefined,
 			modelPath: typeof parsed.modelPath === 'string' ? parsed.modelPath : null,
 			audioFile: typeof parsed.audioFile === 'string' && parsed.audioFile ? basename(parsed.audioFile) : undefined,
-			segments: parsed.segments.filter(
-				(segment): segment is Segment => typeof segment === 'object' && segment !== null && typeof (segment as Segment).text === 'string',
-			),
-			speakerNames: parseSpeakerNames(parsed.speakerNames),
+			segments:
+				parsed.transcriptDeleted === true
+					? []
+					: parsed.segments.filter(
+							(segment): segment is Segment => typeof segment === 'object' && segment !== null && typeof (segment as Segment).text === 'string',
+						),
+			transcriptDeleted: parsed.transcriptDeleted === true || undefined,
+			speakerNames: parsed.transcriptDeleted === true ? undefined : parseSpeakerNames(parsed.speakerNames),
 			summary: typeof parsed.summary === 'string' ? parsed.summary : undefined,
 			thread: parseThread(parsed.thread),
 		}
@@ -391,60 +413,61 @@ export async function resolveProjectAudio(jsonPath: string, record: TranscriptRe
 	}
 }
 
-/**
- * Rewrite the segments of an already stored transcript, keeping every other field untouched.
- * Used by inline editing, which changes text only.
- * @returns whether the file now holds the new segments (never throws).
- */
-export async function updateTranscriptSegments(path: string, segments: Segment[]): Promise<boolean> {
-	try {
-		const record = await readTranscript(path)
-		if (!record) return false
-		await writeRecordAtomic(path, { ...record, segments })
-		return true
-	} catch (error) {
-		console.warn('failed to update transcript segments:', path, error)
-		return false
+const serializeMetadata = createSerialExecutor()
+
+/** Failed earlier edits can leave raw JSON backups. Redaction must remove those too. */
+async function removePreviousMetadataArtifacts(target: string) {
+	const folder = await pathApi.dirname(target)
+	const name = (await pathApi.basename(target)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+	const recognized = new RegExp(`^${name}\\.(?:bak|tmp)-\\d+-\\d+$`)
+	for (const entry of await fs.readDir(folder)) {
+		if (entry.isFile && recognized.test(entry.name)) await fs.remove(await pathApi.join(folder, entry.name))
 	}
 }
 
-/** Store the speaker names alongside an already saved transcript. @returns whether it was written. */
-export async function updateTranscriptSpeakerNames(path: string, speakerNames: SpeakerNames): Promise<boolean> {
-	try {
-		const record = await readTranscript(path)
-		if (!record) return false
-		await writeRecordAtomic(path, { ...record, speakerNames })
-		return true
-	} catch (error) {
-		console.warn('failed to update transcript speaker names:', path, error)
-		return false
-	}
+/** Every metadata edit reads the latest durable record, never a stale parallel snapshot. */
+function updateRecord(path: string, change: (record: TranscriptRecord) => TranscriptRecord | null, requireBackupCleanup = false): Promise<boolean> {
+	return serializeMetadata(path, async () => {
+		try {
+			const record = await readTranscript(path)
+			const next = record && change(record)
+			if (!next) return false
+			if (requireBackupCleanup) await removePreviousMetadataArtifacts(path)
+			await writeRecordAtomic(path, next, requireBackupCleanup)
+			return true
+		} catch (error) {
+			console.warn('failed to update transcript:', path, error)
+			return false
+		}
+	})
 }
 
-/** Store the question-and-answer thread alongside an already saved transcript. */
-export async function updateTranscriptThread(path: string, thread: AiThreadEntry[]): Promise<boolean> {
-	try {
-		const record = await readTranscript(path)
-		if (!record) return false
-		await writeRecordAtomic(path, { ...record, thread: thread.length > 0 ? thread : undefined })
-		return true
-	} catch (error) {
-		console.warn('failed to update transcript thread:', path, error)
-		return false
-	}
+/** Redaction is sticky: late inline edits cannot resurrect intentionally deleted text. */
+export function updateTranscriptSegments(path: string, segments: Segment[]): Promise<boolean> {
+	return updateRecord(path, (record) => (record.transcriptDeleted ? null : { ...record, segments }))
 }
 
-/** Store the AI summary alongside an already saved transcript. @returns whether it was written. */
-export async function updateTranscriptSummary(path: string, summary: string): Promise<boolean> {
-	try {
-		const record = await readTranscript(path)
-		if (!record) return false
-		await writeRecordAtomic(path, { ...record, summary })
-		return true
-	} catch (error) {
-		console.warn('failed to update transcript summary:', path, error)
-		return false
-	}
+export function updateTranscriptSpeakerNames(path: string, speakerNames: SpeakerNames): Promise<boolean> {
+	return updateRecord(path, (record) => (record.transcriptDeleted ? null : { ...record, speakerNames }))
+}
+
+/** Caller must serialize thread changes with redaction and avoid submitting pre-redaction history. */
+export function updateTranscriptThread(path: string, thread: AiThreadEntry[], afterRedaction = false): Promise<boolean> {
+	return updateRecord(path, (record) => (record.transcriptDeleted && !afterRedaction ? null : { ...record, thread: thread.length > 0 ? thread : undefined }))
+}
+
+/** Publish the derived result and optional raw-text redaction as ONE atomic metadata replacement. */
+export function updateTranscriptSummary(path: string, summary: string, deleteRaw = false): Promise<boolean> {
+	if (deleteRaw && !summary.trim()) return Promise.resolve(false)
+	return updateRecord(
+		path,
+		(record) => ({
+			...record,
+			summary,
+			...(deleteRaw ? { segments: [], speakerNames: undefined, thread: undefined, transcriptDeleted: true } : {}),
+		}),
+		deleteRaw,
+	)
 }
 
 /**
@@ -461,7 +484,11 @@ export function notifyTranscriptsChanged() {
  * Remove one transcript: the whole project folder (media copy included) for project saves, the
  * single file for legacy ones. Returns whether it is gone.
  */
-export async function deleteTranscript(path: string): Promise<boolean> {
+export function deleteTranscript(path: string): Promise<boolean> {
+	return serializeMetadata(path, () => deleteTranscriptRecord(path))
+}
+
+async function deleteTranscriptRecord(path: string): Promise<boolean> {
 	try {
 		if (isProjectRecordPath(path)) {
 			await fs.remove(await pathApi.dirname(path), { recursive: true })
@@ -500,7 +527,11 @@ function keptStampOf(stem: string) {
  * file) to one carrying the new name while keeping the original timestamp stamp.
  * @returns the new entry, or null on failure (never throws).
  */
-export async function renameTranscript(path: string, newName: string): Promise<TranscriptEntry | null> {
+export function renameTranscript(path: string, newName: string): Promise<TranscriptEntry | null> {
+	return serializeMetadata(path, () => renameTranscriptRecord(path, newName))
+}
+
+async function renameTranscriptRecord(path: string, newName: string): Promise<TranscriptEntry | null> {
 	try {
 		const record = await readTranscript(path)
 		if (!record) return null

@@ -224,20 +224,32 @@ impl ServerProcess {
     /// Built per attempt: the file part is a stream, so a retry needs a fresh
     /// form rather than a clone of the consumed one.
     async fn transcribe_form(options: &crate::cmd::TranscribeOptions) -> Result<multipart::Form> {
-        let file = tokio::fs::File::open(&options.path)
-            .await
-            .context("failed to open audio file")?;
-        let file_len = file.metadata().await.context("failed to read file metadata")?.len();
-        let file_name = Path::new(&options.path)
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let body = reqwest::Body::wrap_stream(ReaderStream::new(file));
-        let file_part = multipart::Part::stream_with_length(body, file_len)
-            .file_name(file_name)
-            .mime_str("application/octet-stream")?;
+        let memory = crate::private_audio::is_memory_path(&options.path);
+        let file_part = if memory {
+            let bytes = crate::private_audio::get(&options.path)?;
+            let len = bytes.len() as u64;
+            multipart::Part::stream_with_length(reqwest::Body::from(bytes), len)
+                .file_name("private-audio.wav")
+                .mime_str("application/octet-stream")?
+        } else {
+            let file = tokio::fs::File::open(&options.path)
+                .await
+                .context("failed to open audio file")?;
+            let len = file.metadata().await.context("failed to read file metadata")?.len();
+            let name = Path::new(&options.path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let body = reqwest::Body::wrap_stream(ReaderStream::new(file));
+            multipart::Part::stream_with_length(body, len)
+                .file_name(name)
+                .mime_str("application/octet-stream")?
+        };
         let mut form = multipart::Form::new().part("file", file_part).text("stream", "true");
+        if memory || options.no_audio_storage.unwrap_or(false) {
+            form = form.text("no_audio_storage", "true");
+        }
 
         if let Some(ref lang) = options.lang {
             if !lang.is_empty() {

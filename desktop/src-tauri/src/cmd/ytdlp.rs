@@ -99,6 +99,9 @@ mod tests {
 
 #[tauri::command]
 pub async fn download_audio(app_handle: AppHandle, url: String, out_path: String) -> CommandResult<()> {
+    if crate::private_audio::enabled(&app_handle)? {
+        return Err(eyre!("URL downloads are unavailable with Do not store audio enabled; import an existing audio file instead").into());
+    }
     tracing::debug!("download audio {}", url);
     let name = get_binary_name();
     let path = app_handle.path().app_local_data_dir().context("Can't get data directory")?;

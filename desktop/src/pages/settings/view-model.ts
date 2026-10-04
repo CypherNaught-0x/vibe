@@ -19,7 +19,15 @@ import { useNavigate } from 'react-router-dom'
 import { load } from '@tauri-apps/plugin-store'
 import { useStoreValue } from '~/lib/use-store-value'
 import { collectLogs, getPrettyVersion, getVersionNumber } from '~/lib/logs'
-import { cleanupPartialDownloads, isModelFileUsable, listInstalledModels, type InstalledModel, type ModelMetadata } from '~/lib/model'
+import {
+	AUDIO8_MODEL_URL,
+	cleanupPartialDownloads,
+	isAudio8Model,
+	isModelFileUsable,
+	listInstalledModels,
+	type InstalledModel,
+	type ModelMetadata,
+} from '~/lib/model'
 import { buildSkill, installSkill, type SkillTarget } from '~/lib/skill'
 
 export interface GpuDevice {
@@ -40,6 +48,10 @@ async function openSelectedModel(path: string | null) {
 
 async function openModelsUrl() {
 	openUrl(config.modelsDocURL)
+}
+
+async function openAudio8Source() {
+	await openUrl(AUDIO8_MODEL_URL)
 }
 
 async function reportIssue() {
@@ -108,6 +120,7 @@ export function viewModel() {
 	const preference = usePreferenceProvider()
 	const listenersRef = useRef<UnlistenFn[]>([])
 	const [downloadURL, setDownloadURL] = useState('')
+	const [isAddingAudio8, setIsAddingAudio8] = useState(false)
 	const [apiBaseUrl, setApiBaseUrl] = useState<string | null>(null)
 	const [isStartingApiServer, setIsStartingApiServer] = useState(false)
 	const [isStoppingApiServer, setIsStoppingApiServer] = useState(false)
@@ -194,15 +207,36 @@ export function viewModel() {
 
 	/** Replace a broken model in place, so a retry never leaves a second copy next to the bad file. */
 	function redownloadModel(model: InstalledModel) {
+		if (isAudio8Model(model.name)) {
+			void addAudio8Model()
+			return
+		}
 		navigate('/setup', { state: { replacePath: model.path } })
+	}
+
+	async function addAudio8Model() {
+		if (isAddingAudio8) return
+		setIsAddingAudio8(true)
+		try {
+			const modelPath = await invoke<string>('add_audio8_model')
+			await loadModels()
+			if (await selectModel(modelPath)) toast.success(m.audio8Added())
+		} catch (error) {
+			console.error('failed to add Audio8 model:', error)
+			toast.error(String(error))
+		} finally {
+			setIsAddingAudio8(false)
+		}
 	}
 
 	async function readModelMetadata(modelPath: string) {
 		try {
 			return await invoke<ModelMetadata>('get_model_metadata', { modelPath })
 		} catch (error) {
+			// A marker must be recognised by the backend before it can be selected safely.
+			if (isAudio8Model(modelPath)) throw error
 			// Unknown GGUF formats may still be loadable by Server (for example Whisper GGUF).
-			console.error('failed to read GGUF metadata:', error)
+			console.error('failed to read model metadata:', error)
 			return null
 		}
 	}
@@ -245,11 +279,18 @@ export function viewModel() {
 	}
 
 	async function selectModel(modelPath: string) {
-		const metadata = await readModelMetadata(modelPath)
-		if (!(await ensureRequiredVad(metadata))) return
-		preference.setModelMetadata(metadata)
-		applyModelLanguage(metadata)
-		preference.setModelPath(modelPath)
+		try {
+			const metadata = await readModelMetadata(modelPath)
+			if (!(await ensureRequiredVad(metadata))) return false
+			preference.setModelMetadata(metadata)
+			applyModelLanguage(metadata)
+			preference.setModelPath(modelPath)
+			return true
+		} catch (error) {
+			console.error('failed to select model:', error)
+			toast.error(String(error))
+			return false
+		}
 	}
 
 	async function changeProjectsPath() {
@@ -411,6 +452,9 @@ export function viewModel() {
 		openModelPath,
 		openSelectedModel,
 		openModelsUrl,
+		openAudio8Source,
+		addAudio8Model,
+		isAddingAudio8,
 		revealLogs,
 		revealTemp,
 		models,

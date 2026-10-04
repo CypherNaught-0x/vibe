@@ -148,7 +148,8 @@ function MeetPermissionRow({ enabled }: { enabled: boolean }) {
 
 export function RecordingSection() {
 	const shortcut = useRecordingShortcut()
-	const { meetingDetectionEnabled, setMeetingDetectionEnabled, autoTranscribeAfterRecording, setAutoTranscribeAfterRecording } = usePreferenceProvider()
+	const { meetingDetectionEnabled, setMeetingDetectionEnabled, autoTranscribeAfterRecording, setAutoTranscribeAfterRecording,
+		liveTranscription, setLiveTranscription, modelPath } = usePreferenceProvider()
 	const isMacOS = platform() === 'macos'
 
 	return (
@@ -161,6 +162,10 @@ export function RecordingSection() {
 			</SettingsGroup>
 
 			<SettingsGroup title={m.recordingControls()}>
+				<SettingsRow label={m.liveTranscription()} description={`${m.liveTranscriptionInfo()} ${m.liveAudioRamOnly()}`}>
+					<Switch checked={liveTranscription} onCheckedChange={setLiveTranscription}
+						disabled={!modelPath?.endsWith('.audio8.json') && !liveTranscription} aria-label={m.liveTranscription()} />
+				</SettingsRow>
 				<SettingsRow label={m.autoTranscribeAfterRecording()} description={m.autoTranscribeAfterRecordingInfo()}>
 					<Switch
 						checked={autoTranscribeAfterRecording}

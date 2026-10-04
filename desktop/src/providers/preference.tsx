@@ -129,6 +129,13 @@ export interface Preference {
 	analyticsEnabled: boolean
 	setAnalyticsEnabled: (value: boolean) => void
 
+	/** Capture audio in RAM and never create project audio copies. */
+	noAudioStorage: boolean
+	setNoAudioStorage: ModifyState<boolean>
+	/** Retain only the derived output after successful AI processing. */
+	deleteTranscriptAfterAi: boolean
+	setDeleteTranscriptAfterAi: ModifyState<boolean>
+
 	/** Auto-save every finished transcription into the projects folder (powers the Recents sidebar). */
 	saveTranscripts: boolean
 	setSaveTranscripts: ModifyState<boolean>
@@ -137,6 +144,9 @@ export interface Preference {
 	setMeetingDetectionEnabled: ModifyState<boolean>
 	autoTranscribeAfterRecording: boolean
 	setAutoTranscribeAfterRecording: ModifyState<boolean>
+	/** Manual Audio8 live capture is RAM-only and benchmark-gated. */
+	liveTranscription: boolean
+	setLiveTranscription: ModifyState<boolean>
 }
 
 // Create the context
@@ -271,9 +281,12 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	const [noGpu, setNoGpu] = usePersisted<boolean>(CONFIG_KEYS.noGpu, false)
 	const [unloadTimeoutMinutes, setUnloadTimeoutMinutes] = usePersisted<number>(CONFIG_KEYS.unloadTimeoutMinutes, 5)
 	const [cpuVariant, setCpuVariant] = usePersisted<CpuVariant>(CONFIG_KEYS.cpuVariant, 'auto')
+	const [noAudioStorage, setNoAudioStorage] = usePersisted<boolean>(CONFIG_KEYS.noAudioStorage, false)
+	const [deleteTranscriptAfterAi, setDeleteTranscriptAfterAi] = usePersisted<boolean>(CONFIG_KEYS.deleteTranscriptAfterAi, false)
 	const [saveTranscripts, setSaveTranscripts] = usePersisted<boolean>(CONFIG_KEYS.saveTranscripts, true)
 	const [meetingDetectionEnabled, setMeetingDetectionEnabled] = usePersisted<boolean>(CONFIG_KEYS.meetingDetectionEnabled, false)
 	const [autoTranscribeAfterRecording, setAutoTranscribeAfterRecording] = usePersisted<boolean>(CONFIG_KEYS.autoTranscribeAfterRecording, false)
+	const [liveTranscription, setLiveTranscription] = usePersisted<boolean>(CONFIG_KEYS.liveTranscription, false)
 
 	const [analyticsEnabled, setAnalyticsEnabledLocal] = useState(true)
 
@@ -381,6 +394,9 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setAi(DEFAULT_AI)
 		setMeetingDetectionEnabled(false)
 		setAutoTranscribeAfterRecording(false)
+		setLiveTranscription(false)
+		setNoAudioStorage(false)
+		setDeleteTranscriptAfterAi(false)
 		message(m.successAction())
 	}
 
@@ -460,12 +476,18 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setUnloadTimeoutMinutes,
 		analyticsEnabled,
 		setAnalyticsEnabled,
+		noAudioStorage,
+		setNoAudioStorage,
+		deleteTranscriptAfterAi,
+		setDeleteTranscriptAfterAi,
 		saveTranscripts,
 		setSaveTranscripts,
 		meetingDetectionEnabled,
 		setMeetingDetectionEnabled,
 		autoTranscribeAfterRecording,
 		setAutoTranscribeAfterRecording,
+		liveTranscription,
+		setLiveTranscription,
 	}
 
 	return <PreferenceContext.Provider value={preference}>{children}</PreferenceContext.Provider>

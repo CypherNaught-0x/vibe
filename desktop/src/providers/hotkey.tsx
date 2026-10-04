@@ -17,6 +17,7 @@ import { usePreferenceProvider } from '~/providers/preference'
 import { m } from '~/paraglide/messages.js'
 import { hideDictationIndicator, showDictationIndicator } from '~/lib/dictation-indicator'
 import * as config from '~/lib/config'
+import { discardPrivateAudio } from '~/lib/privacy'
 
 // Module-level flag used by home viewModel to skip processing
 // when hotkey-triggered recording finishes
@@ -140,6 +141,7 @@ export function HotkeyProvider({ children }: { children: ReactNode }) {
 			await invoke('start_record', {
 				devices: [input],
 				recordingName: null,
+				noAudioStorage: preferenceRef.current.noAudioStorage,
 			})
 			indicatorSessionRef.current += 1
 			showIndicator('recording')
@@ -194,6 +196,7 @@ export function HotkeyProvider({ children }: { children: ReactNode }) {
 					path,
 					...withoutUnsupportedOptions(preferenceRef.current.modelOptions, preferenceRef.current.modelMetadata?.capabilities),
 					...(requiresVad ? { vad_model: `${modelsFolder}/${config.vadModelFilename}` } : {}),
+					no_audio_storage: preferenceRef.current.noAudioStorage,
 				}
 				const startedAt = performance.now()
 				const res: transcript.Transcript = await invoke('transcribe', { options })
@@ -210,7 +213,12 @@ export function HotkeyProvider({ children }: { children: ReactNode }) {
 				if (tasks.dictation.enabled && resultText.trim()) {
 					try {
 						const cleaned = await createClient(connection).ask(fillPrompt(tasks.dictation.prompt, { text: resultText }))
-						if (cleaned.trim()) resultText = cleaned
+						if (cleaned.trim()) {
+							resultText = cleaned
+							// Dictation is intentionally never saved to the transcript store. Release raw
+							// segments only after a successful, non-empty rewrite is held in RAM.
+							if (preferenceRef.current.deleteTranscriptAfterAi) res.segments.length = 0
+						}
 					} catch (e) {
 						console.error('dictation clean-up failed, using the raw text:', e)
 					}
@@ -237,6 +245,7 @@ export function HotkeyProvider({ children }: { children: ReactNode }) {
 				finishIndicator('error', { message })
 				await notify('Vibe', message)
 			} finally {
+				await discardPrivateAudio(path)
 				isStoppingRef.current = false
 				isHotkeyRecordingRef.current = false
 				hotkeyRecordingActive = false

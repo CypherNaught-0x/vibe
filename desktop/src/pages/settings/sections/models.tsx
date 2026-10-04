@@ -1,14 +1,15 @@
 import { useState } from 'react'
-import { Check, Download, FolderOpen, Pencil, X } from 'lucide-react'
+import { Check, Download, FolderOpen, Loader2, Pencil, X } from 'lucide-react'
 import { m } from '~/paraglide/messages.js'
 import { ReactComponent as FolderIcon } from '~/icons/folder.svg'
 import { ReactComponent as LinkIcon } from '~/icons/link.svg'
 import { ReactComponent as WrenchIcon } from '~/icons/wrench.svg'
 import NumberField from '~/components/number-field'
 import { Input } from '~/components/ui/input'
+import { Button } from '~/components/ui/button'
 import { Switch } from '~/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
-import { ActionRow, IconAction, SettingsGroup, SettingsRow, rowControlClass, type SettingsViewModel } from './shared'
+import { ActionRow, IconAction, SettingsGroup, SettingsNote, SettingsRow, rowControlClass, type SettingsViewModel } from './shared'
 import { getFriendlyModelName } from '~/lib/model'
 import { ModelGlyph } from '~/components/brand-glyph'
 
@@ -89,6 +90,23 @@ export function ModelsSection({ vm }: { vm: SettingsViewModel }) {
 						</>
 					)}
 				</SettingsRow>
+			</SettingsGroup>
+
+			<SettingsGroup title="Audio8-ASR-Infinite">
+				<SettingsRow label="Audio8-ASR-Infinite" description={m.audio8ModelInfo()} clampDescription={false}>
+					<Button type="button" variant="outline" onClick={vm.addAudio8Model} disabled={vm.isAddingAudio8} aria-busy={vm.isAddingAudio8}>
+						{vm.isAddingAudio8 && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
+						{m.audio8AddModel()}
+					</Button>
+				</SettingsRow>
+				<SettingsNote>{m.audio8RuntimeInfo()}</SettingsNote>
+				<SettingsNote>{m.audio8Limitations()}</SettingsNote>
+				<ActionRow
+					label="Hugging Face · Edge0/Audio8-ASR-Infinite"
+					icon={<LinkIcon className="h-4 w-4" />}
+					onClick={vm.openAudio8Source}
+					activateOnClick
+				/>
 			</SettingsGroup>
 
 			<SettingsGroup title={m.settingsHardware()}>

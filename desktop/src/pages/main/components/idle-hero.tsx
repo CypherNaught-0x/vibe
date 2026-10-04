@@ -2,15 +2,17 @@ import { listen } from '@tauri-apps/api/event'
 import { AnimatePresence, motion } from 'framer-motion'
 import { FolderOpen, Link2, Mic, Plus, Square, Upload, X } from 'lucide-react'
 import { siFacebook, siInstagram, siTiktok, siX, siYoutube } from 'simple-icons'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { m } from '~/paraglide/messages.js'
 import AudioDeviceInput from '~/components/audio-device-input'
 import { Button } from '~/components/ui/button'
 import { Input } from '~/components/ui/input'
 import { Spinner } from '~/components/ui/spinner'
+import { Switch } from '~/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
 import { cn } from '~/lib/style'
 import { parseMediaLinks } from '~/lib/ytdlp'
+import type { LiveRecordingState } from '~/pages/home/hooks/use-live-recording'
 import { useSession, type IdlePanel } from '../session'
 import QuietRow from './quiet-row'
 
@@ -102,6 +104,122 @@ function Segment({ active, label, onClick, children }: { active?: boolean; label
 	)
 }
 
+function LivePolicy({ saveTranscripts }: { saveTranscripts: boolean }) {
+	return (
+		<div className="space-y-1 text-xs text-muted-foreground">
+			<p>{m.liveAudioRamOnly()}</p>
+			<p>
+				{m.saveTranscript()}: {saveTranscripts ? m.enabled() : m.disabled()}
+			</p>
+		</div>
+	)
+}
+
+/** Distance from the bottom that still counts as "following" the newest words. */
+const FOLLOW_SLACK_PX = 48
+/** Lines above the newest fade to nothing over the top of the window. */
+const FADE_MASK = 'linear-gradient(to bottom, transparent 0, rgba(0,0,0,0.25) 14%, black 55%)'
+
+/** Captions flow as one paragraph, anchored to the bottom; segment boundaries are an internal detail. */
+function LiveCaptions({ live }: { live: LiveRecordingState }) {
+	const scroller = useRef<HTMLDivElement>(null)
+	// Scrolling up to re-read pauses following (and the fade) until the reader returns to the bottom.
+	const [following, setFollowing] = useState(true)
+	const followingRef = useRef(true)
+
+	useLayoutEffect(() => {
+		const element = scroller.current
+		if (!element || !followingRef.current) return
+		element.scrollTo?.({ top: element.scrollHeight, behavior: 'smooth' })
+	}, [live.segments.length, live.partial])
+
+	function onScroll() {
+		const element = scroller.current
+		if (!element) return
+		const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight <= FOLLOW_SLACK_PX
+		if (atBottom !== followingRef.current) {
+			followingRef.current = atBottom
+			setFollowing(atBottom)
+		}
+	}
+
+	return (
+		<div
+			ref={scroller}
+			onScroll={onScroll}
+			role="log"
+			aria-label={m.liveCaptions()}
+			aria-live="polite"
+			style={following ? { maskImage: FADE_MASK, WebkitMaskImage: FADE_MASK } : undefined}
+			className="min-h-0 flex-1 overflow-y-auto rounded-xl bg-background/60 select-text">
+			<p className="flex min-h-full flex-col justify-end px-5 pt-24 pb-5 text-xl leading-relaxed text-foreground/85">
+				<span>
+					{live.segments.map((segment, index) => (
+						<span key={index}>{segment.text}</span>
+					))}
+					{live.partial && <span className="text-foreground">{live.partial}</span>}
+				</span>
+			</p>
+		</div>
+	)
+}
+
+function LiveDetails({ live, saveTranscripts }: { live: LiveRecordingState; saveTranscripts: boolean }) {
+	const status =
+		live.phase === 'loading' ? m.liveLoading() : live.phase === 'calibrating' ? m.liveCalibrating() : live.phase === 'finishing' ? m.liveFinishing() : null
+	return (
+		<div className="flex min-h-0 w-full flex-1 flex-col gap-3">
+			{status && (
+				<p role="status" className="flex items-center justify-center gap-2 text-sm">
+					<Spinner className="h-4 w-4" />
+					{status}
+				</p>
+			)}
+			{live.calibration && (
+				<p className="text-center text-xs text-muted-foreground">
+					{m.liveBenchmarkInfo({
+						seconds: (live.calibration.pcm_capacity_samples / 16000).toFixed(1),
+						window: String(live.calibration.window_tokens),
+					})}
+					{live.calibration.device && <span> · {live.calibration.device}</span>}
+				</p>
+			)}
+			<LiveCaptions live={live} />
+			{live.error && (
+				<p role="alert" className="text-sm text-destructive">
+					{live.error}
+				</p>
+			)}
+			<LivePolicy saveTranscripts={saveTranscripts} />
+		</div>
+	)
+}
+
+function PrivacyOption({ label, checked, onChange }: { label: string; checked: boolean; onChange: (value: boolean) => void }) {
+	return (
+		<label className="flex cursor-pointer items-center justify-between gap-4 text-sm text-foreground">
+			<span>{label}</span>
+			<Switch checked={checked} onCheckedChange={onChange} aria-label={label} />
+		</label>
+	)
+}
+
+/** The same switches as Settings → Privacy, where the choice matters: right before recording. */
+function RecordPrivacy() {
+	const { preference } = useSession()
+	return (
+		<div className="space-y-1">
+			<PrivacyOption label={m.saveProjects()} checked={preference.saveTranscripts} onChange={preference.setSaveTranscripts} />
+			<PrivacyOption label={m.privacyNoAudioStorage()} checked={preference.noAudioStorage} onChange={preference.setNoAudioStorage} />
+			<PrivacyOption
+				label={m.privacyDeleteTranscriptAfterAi()}
+				checked={preference.deleteTranscriptAfterAi}
+				onChange={preference.setDeleteTranscriptAfterAi}
+			/>
+		</div>
+	)
+}
+
 function RecordPanel() {
 	const { recording, recordElapsed, preference } = useSession()
 
@@ -111,15 +229,20 @@ function RecordPanel() {
 	}, [])
 
 	if (recording.isRecording) {
+		const live = recording.isLiveRecording ? recording.live : null
+		const preparing = live?.phase === 'loading' || live?.phase === 'calibrating'
 		return (
-			<div className="flex flex-col items-center gap-4 py-2.5">
-				<div className="flex items-center gap-3">
-					<LevelMeter />
-					<span className="font-mono text-2xl tracking-tight tabular-nums">{formatElapsed(recordElapsed)}</span>
-				</div>
-				<Button onClick={() => recording.stopRecord()} className="h-10 w-full rounded-xl">
+			<div className={cn('flex flex-col items-center gap-4 py-2.5', live && 'min-h-0 flex-1')}>
+				{!preparing && (
+					<div className="flex items-center gap-3">
+						{(!live || live.phase === 'ready') && <LevelMeter />}
+						<span className="font-mono text-2xl tracking-tight tabular-nums">{formatElapsed(recordElapsed)}</span>
+					</div>
+				)}
+				{live && <LiveDetails live={live} saveTranscripts={preference.saveTranscripts} />}
+				<Button onClick={() => recording.stopRecord()} disabled={live?.phase === 'finishing'} className="h-10 w-full rounded-xl">
 					<Square className="h-3.5 w-3.5 fill-current" />
-					{m.stopRecording()}
+					{preparing ? m.cancel() : m.stopRecording()}
 				</Button>
 			</div>
 		)
@@ -137,9 +260,17 @@ function RecordPanel() {
 				<AudioDeviceInput type="input" devices={recording.devices} device={recording.inputDevice} setDevice={recording.setInputDevice} />
 				<AudioDeviceInput type="output" devices={recording.devices} device={recording.outputDevice} setDevice={recording.setOutputDevice} />
 			</div>
+			{preference.liveTranscription && <p className="text-xs text-muted-foreground">{m.liveTranscriptionInfo()}</p>}
+			{recording.liveEnabled && !recording.live && <p className="text-xs text-muted-foreground">{m.liveAudioRamOnly()}</p>}
+			{!recording.live && <RecordPrivacy />}
+			{recording.live && <LiveDetails live={recording.live} saveTranscripts={preference.saveTranscripts} />}
 			<Button
 				onClick={() => recording.startRecord()}
-				disabled={!preference.modelPath || (!recording.inputDevice && !recording.outputDevice)}
+				disabled={
+					!preference.modelPath ||
+					(!recording.inputDevice && !recording.outputDevice) ||
+					(recording.liveEnabled && !['en', 'zh'].includes(preference.modelOptions.lang))
+				}
 				className="h-10 w-full rounded-xl disabled:opacity-40">
 				<Mic className="h-4 w-4" />
 				{m.startRecord()}
@@ -327,12 +458,18 @@ export default function IdleHero() {
 		if (next === 'link') void link.switchToLinkTab()
 	}
 
+	// A live capture is a reading surface: the captions take all the room the window has.
+	const live = recording.isLiveRecording
 	return (
 		// One optical column: pills, active source and quiet row all span max-w-xl with a 20px rhythm.
 		// The extra bottom padding lifts the column above the true centre — optically centred reads better.
-		<div className="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center gap-5 px-6 pt-4 pb-[30vh]">
+		<div
+			className={cn(
+				'mx-auto flex w-full flex-1 flex-col gap-5 px-6 pt-4',
+				live ? 'min-h-0 max-w-4xl pb-6' : 'max-w-xl justify-center pb-[30vh]',
+			)}>
 			{/* Joined source switcher: one control, three keys; the active source replaces the drop area. */}
-			<div className="mx-auto inline-flex items-center gap-1 rounded-full border border-border bg-muted/60 p-1">
+			<div className={cn('mx-auto inline-flex items-center gap-1 rounded-full border border-border bg-muted/60 p-1', live && 'hidden')}>
 				<Segment active={panel === 'none'} label={m.fromFile()} onClick={() => selectPanel('none')}>
 					<FolderOpen className="h-[18px] w-[18px]" />
 				</Segment>
@@ -345,7 +482,7 @@ export default function IdleHero() {
 			</div>
 
 			{/* Fixed-height slot sized to the drop zone so switching sources never moves the pills or the quiet row. */}
-			<div className="flex min-h-[220px] w-full flex-col justify-center">
+			<div className={cn('flex w-full flex-col justify-center', live ? 'min-h-0 flex-1' : 'min-h-[220px]')}>
 				<AnimatePresence mode="wait" initial={false}>
 					{panel === 'none' ? (
 						<motion.button
@@ -386,14 +523,17 @@ export default function IdleHero() {
 							exit={{ opacity: 0, y: -6 }}
 							transition={{ duration: 0.18, ease: 'easeOut' }}
 							// Same footprint as the drop zone so the composition stays anchored.
-							className="flex min-h-[220px] w-full flex-col justify-center rounded-[1.25rem] border border-border bg-muted/30 px-7">
+							className={cn(
+								'flex w-full flex-col rounded-[1.25rem] border border-border bg-muted/30 px-7',
+								live ? 'min-h-0 flex-1' : 'min-h-[220px] justify-center',
+							)}>
 							{panel === 'record' ? <RecordPanel /> : <LinkPanel />}
 						</motion.div>
 					)}
 				</AnimatePresence>
 			</div>
 
-			<QuietRow />
+			{!live && <QuietRow />}
 		</div>
 	)
 }

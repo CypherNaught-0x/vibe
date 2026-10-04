@@ -39,7 +39,13 @@ pub(super) async fn transcribe(
         enhance_audio,
         verbose: config.verbose(),
     };
-    let samples = audio::read_bytes_with_options(file, audio_options).map_err(|err| {
+    let no_audio_storage = FormValues::new(&form).bool("no_audio_storage");
+    let decoded = if no_audio_storage {
+        audio::read_bytes_in_memory(file, audio_options)
+    } else {
+        audio::read_bytes_with_options(file, audio_options)
+    };
+    let samples = decoded.map_err(|err| {
         error(
             StatusCode::BAD_REQUEST,
             "invalid_audio",

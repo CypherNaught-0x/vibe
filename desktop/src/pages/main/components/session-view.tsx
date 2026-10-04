@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
+import { m } from '~/paraglide/messages.js'
 import { useSession } from '../session'
 import { useTranscriptViewOptions, type TranscriptTab } from '../hooks/use-transcript-view'
 import BatchBanner from './batch-banner'
@@ -17,8 +18,8 @@ export default function SessionView() {
 
 	useEffect(() => {
 		setQuery('')
-		setTab('transcript')
-	}, [queue.selectedId])
+		setTab(selected?.transcriptDeleted && selected.summary ? 'summary' : 'transcript')
+	}, [queue.selectedId, selected?.transcriptDeleted])
 
 	// A summary that starts, by hand or on its own, opens its tab once so the text is seen arriving.
 	useEffect(() => {
@@ -42,6 +43,11 @@ export default function SessionView() {
 			<div className="flex min-h-0 min-w-0 flex-1 flex-col">
 				<BatchBanner />
 				<TranscriptToolbar job={selected} query={query} setQuery={setQuery} options={options} tab={tab} setTab={setTab} />
+				{selected?.transcriptDeleted && (
+					<p className="px-6 py-2 text-sm text-muted-foreground" role="status">
+						{m.privacyTranscriptDeleted()}
+					</p>
+				)}
 				<div className="min-h-0 flex-1">{selected && <TranscriptView job={selected} query={query} options={options} tab={tab} />}</div>
 			</div>
 		</motion.div>

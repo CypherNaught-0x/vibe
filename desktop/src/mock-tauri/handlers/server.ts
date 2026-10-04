@@ -78,6 +78,28 @@ const MOCK_LANGUAGES = [
 	'mk',
 ]
 
+const AUDIO8_FILENAME = 'Audio8-ASR-Infinite.audio8.json'
+const AUDIO8_MARKER = { engine: 'audio8', checkpoint: 'Edge0/Audio8-ASR-Infinite', revision: '7476824bc222e4ad509d286e8cae8b8d3f371129' }
+
+function isAudio8Path(path: unknown) {
+	return typeof path === 'string' && path.toLowerCase().endsWith('.audio8.json')
+}
+
+function validAudio8Marker(path: string) {
+	try {
+		const content = virtualFs.get(path)
+		const marker = JSON.parse(typeof content === 'string' ? content : '') as Record<string, unknown>
+		return (
+			Object.keys(marker).length === 3 &&
+			marker.engine === AUDIO8_MARKER.engine &&
+			marker.checkpoint === AUDIO8_MARKER.checkpoint &&
+			marker.revision === AUDIO8_MARKER.revision
+		)
+	} catch {
+		return false
+	}
+}
+
 // Module level state, reset only by the mock itself.
 let apiBaseUrl: string | null = null
 
@@ -171,20 +193,51 @@ function runTranscribe(
 export const serverHandlers: CommandHandlerMap = {
 	get_models_folder: () => MODELS_FOLDER,
 
-	// ({ modelPath }) - every mock model reports the same whisper capabilities.
-	get_model_metadata: () => ({
-		format: 'gguf',
-		capabilities: {
-			engine: 'whisper',
-			requires_vad: false,
-			languages: MOCK_LANGUAGES,
-			language_detection: true,
-			streaming: true,
-			translation: true,
-			timestamps: true,
-			text_prompts: true,
-		},
-	}),
+	add_audio8_model: () => {
+		const path = `${MODELS_FOLDER}/${AUDIO8_FILENAME}`
+		virtualFs.set(path, JSON.stringify(AUDIO8_MARKER))
+		return path
+	},
+
+	check_audio8_model_files: (args) =>
+		(args.paths as string[]).map((path) => ({
+			path,
+			valid: validAudio8Marker(path),
+			size: String(virtualFs.get(path) ?? '').length,
+			reason: validAudio8Marker(path) ? null : 'Invalid or unsupported Audio8 marker',
+		})),
+
+	get_model_metadata: (args) => {
+		if (isAudio8Path(args.modelPath)) {
+			if (!validAudio8Marker(String(args.modelPath))) throw new Error('Invalid or unsupported Audio8 marker')
+			return {
+				format: 'audio8',
+				capabilities: {
+					engine: 'audio8',
+					requires_vad: false,
+					languages: ['en', 'zh'],
+					language_detection: false,
+					streaming: false,
+					translation: false,
+					timestamps: false,
+					text_prompts: false,
+				},
+			}
+		}
+		return {
+			format: 'gguf',
+			capabilities: {
+				engine: 'whisper',
+				requires_vad: false,
+				languages: MOCK_LANGUAGES,
+				language_detection: true,
+				streaming: true,
+				translation: true,
+				timestamps: true,
+				text_prompts: true,
+			},
+		}
+	},
 
 	load_model: async () => {
 		await sleep(300)

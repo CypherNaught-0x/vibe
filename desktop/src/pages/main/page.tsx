@@ -109,7 +109,8 @@ function PlayerSlot() {
 	const { queue } = useSession()
 	const selected = queue.selectedJob
 	// The source media exists as soon as a job does — listening while it transcribes is fine.
-	if (!selected) return null
+	// Recordings kept only in RAM or live captures have no file, so there is nothing to play.
+	if (!selected?.path) return null
 	return <PlayerBar key={selected.id} job={selected} />
 }
 

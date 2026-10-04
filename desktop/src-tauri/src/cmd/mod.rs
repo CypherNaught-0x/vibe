@@ -1,11 +1,13 @@
 use serde::Serialize;
 pub mod app;
 pub mod audio;
+pub mod audio8;
 pub mod config;
 pub mod download;
 pub mod files;
 pub mod handoff_cmd;
 pub mod keepawake_cmd;
+pub mod live;
 pub mod permissions;
 pub mod server_cmd;
 pub mod skill;

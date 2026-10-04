@@ -8,6 +8,16 @@
 use futures_util::StreamExt;
 use tauri::Manager;
 
+struct PrivatePhoneAudio(Option<String>);
+
+impl Drop for PrivatePhoneAudio {
+    fn drop(&mut self) {
+        if let Some(path) = self.0.take() {
+            let _ = crate::private_audio::discard_private_audio(path);
+        }
+    }
+}
+
 use super::protocol::{self, HandoffEvent, HandoffHeader};
 use super::transfer::{receive_audio, server_transfer_error, write_event, HandoffHandler, TransferError};
 use crate::server::ServerEvent;
@@ -104,12 +114,13 @@ impl HandoffHandler {
         write_event(send, &HandoffEvent::Accepted).await?;
         self.emit_activity("receiving", None);
 
-        // The recording exists nowhere but the phone until this point, so it is
-        // kept like any other Vibe recording rather than deleted after use.
-        let (audio_path, audio_bytes) = receive_audio(recv, header.filename.as_deref()).await?;
+        let no_audio_storage = crate::private_audio::enabled(&self.app_handle)
+            .map_err(|error| TransferError::new("internal_error", format!("could not read privacy settings: {error}")))?;
+        let (audio_path, audio_bytes) = receive_audio(recv, header.filename.as_deref(), no_audio_storage).await?;
         stats.audio_bytes = Some(audio_bytes);
         let saved_path = audio_path.to_string_lossy().to_string();
-        tracing::info!("handoff saved phone recording to {}", saved_path);
+        // Also runs if the authenticated transfer is cancelled or revoked mid-inference.
+        let _private_audio = PrivatePhoneAudio(no_audio_storage.then(|| saved_path.clone()));
 
         // A failed transcription leaves the file in place on purpose: the audio is
         // complete and is the only copy, so the user can retry from the desktop.
@@ -183,6 +194,7 @@ impl HandoffHandler {
 
         let options = crate::cmd::TranscribeOptions {
             path: audio_path.to_string_lossy().to_string(),
+            no_audio_storage: Some(crate::private_audio::is_memory_path(&saved_path)),
             lang: header.lang.clone(),
             verbose: None,
             n_threads: None,
