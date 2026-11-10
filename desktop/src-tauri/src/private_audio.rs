@@ -475,7 +475,8 @@ pub fn start_record(app: AppHandle, devices: Vec<AudioDevice>, recording_name: O
         };
         streams.push(StreamHandle(stream));
     }
-    let listener = app.once("stop_record", move |_| {
+    // `listen`, not `once`: a repeated stop_record must be a no-op, not a tauri panic.
+    let listener = app.listen("stop_record", move |_| {
         let _ = sender.send(Stop::Requested);
     });
     for stream in &streams {
