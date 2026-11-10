@@ -22,6 +22,7 @@ pub struct EngineCapabilities {
 pub enum Engine {
     Whisper(whisper_rs::Context),
     Audio8(crate::audio8::Model),
+    NemoSpeech(crate::nemo_speech::Model),
     Nemotron {
         model: Box<nemotron_rs::Model>,
         vad: Option<(String, vad_rs::Vad)>,
@@ -42,6 +43,9 @@ impl Engine {
             return crate::audio8::Model::load(path, options).map(Self::Audio8);
         }
         if path.ends_with(".gguf") {
+            if crate::nemo_speech::is_decoder(path) {
+                return crate::nemo_speech::Model::load(path, options).map(Self::NemoSpeech);
+            }
             if let Ok(info) = parakeet_rs::Model::metadata(path) {
                 if info.architecture == "parakeet" && info.variant.contains("v3") {
                     return Ok(Self::Parakeet {
@@ -52,7 +56,8 @@ impl Engine {
             }
             // A GGUF file is never a whisper model, so report why the GGUF
             // engines rejected it instead of handing it to whisper.cpp.
-            let model = nemotron_rs::Model::load(path).context("GGUF file could not be loaded as Parakeet or Nemotron")?;
+            let model = nemotron_rs::Model::load(path)
+                .context("GGUF file could not be loaded as Parakeet, Nemotron or Nemotron 3.5 Transcribe")?;
             return Ok(Self::Nemotron {
                 model: Box::new(model),
                 vad: None,
@@ -65,6 +70,7 @@ impl Engine {
         match self {
             Self::Whisper(context) => context.transcribe(samples, options).map_err(Into::into),
             Self::Audio8(model) => model.transcribe(samples, options, StreamCallbacks::default()),
+            Self::NemoSpeech(model) => model.transcribe(samples, options, StreamCallbacks::default()),
             Self::Nemotron { model, vad } => {
                 if options.translate {
                     bail!("Nemotron does not support translation");
@@ -131,6 +137,7 @@ impl Engine {
         match self {
             Self::Whisper(context) => context.transcribe_stream(samples, options, callbacks).map_err(Into::into),
             Self::Audio8(model) => model.transcribe(samples, options, callbacks),
+            Self::NemoSpeech(model) => model.transcribe(samples, options, callbacks),
             Self::Nemotron { model, vad } => {
                 if options.translate {
                     bail!("Nemotron does not support translation");
@@ -234,6 +241,7 @@ impl Engine {
         match self {
             Self::Whisper(_) => whisper_capabilities(),
             Self::Audio8(_) => crate::audio8::capabilities(),
+            Self::NemoSpeech(_) => crate::nemo_speech::capabilities(),
             Self::Nemotron { model, .. } => EngineCapabilities {
                 engine: "nemotron".to_string(),
                 requires_vad: true,

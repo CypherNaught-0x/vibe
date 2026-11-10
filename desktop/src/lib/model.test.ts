@@ -99,6 +99,19 @@ describe('Audio8 model discovery', () => {
 	})
 })
 
+describe('Nemotron 3.5 Transcribe discovery', () => {
+	it('lists the decoder but not the speech encoder the server loads next to it', async () => {
+		const decoder = { name: 'NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-AD-IQ4_NL.gguf', path: '/models/decoder.gguf' }
+		const encoder = { name: 'NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Encoder-F16.gguf', path: '/models/encoder.gguf' }
+		const streaming = { name: 'nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf', path: '/models/streaming.gguf' }
+		mocks.lsFiles.mockResolvedValue([decoder, encoder, streaming])
+		mocks.invoke.mockImplementation(async (_command, { paths }: { paths: string[] }) =>
+			paths.map((path) => ({ path, valid: true, size: 100, reason: null })),
+		)
+		expect((await listInstalledModels('/models')).map((model) => model.name)).toEqual([decoder.name, streaming.name])
+	})
+})
+
 describe('Audio8 browser mock', () => {
 	const markerPath = `${MODELS_FOLDER}/${AUDIO8_MODEL_FILENAME}`
 	afterEach(() => virtualFs.delete(markerPath))

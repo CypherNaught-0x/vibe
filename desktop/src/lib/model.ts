@@ -110,8 +110,14 @@ export async function cleanupPartialDownloads(folder?: string): Promise<string[]
  */
 const AUXILIARY_MODEL_FILENAMES = [vadModelFilename, diarizeModelFilename, ...legacyDiarizeModelFilenames, embeddingModelFilename, segmentModelFilename]
 
+/**
+ * Nemotron 3.5 Transcribe is two GGUF files: the decoder the user picks, which names its speech
+ * encoder, and the encoder next to it, which the server loads (or downloads) on its own.
+ */
+const SPEECH_ENCODER_PATTERN = /-Transcribe-.*-Encoder(-[\w.]+)?\.gguf$/i
+
 export function isAuxiliaryModelFile(filename: string) {
-	return AUXILIARY_MODEL_FILENAMES.some((auxiliary) => auxiliary.toLowerCase() === filename.toLowerCase())
+	return AUXILIARY_MODEL_FILENAMES.some((auxiliary) => auxiliary.toLowerCase() === filename.toLowerCase()) || SPEECH_ENCODER_PATTERN.test(filename)
 }
 
 /** Every transcription model in the folder, with truncated or corrupt ones flagged rather than hidden. */

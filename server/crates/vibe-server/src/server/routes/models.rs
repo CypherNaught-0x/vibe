@@ -45,6 +45,10 @@ pub(in crate::server) async fn model_metadata(Json(request): Json<ModelMetadataR
                 });
         }
 
+        if crate::nemo_speech::is_decoder(&path) {
+            return Ok(crate::nemo_speech::capabilities());
+        }
+
         if let Ok(info) = parakeet_rs::Model::metadata(&path) {
             if info.architecture == "parakeet" && info.head_kind == "tdt" && info.variant.contains("v3") {
                 return Ok(crate::engine::EngineCapabilities {

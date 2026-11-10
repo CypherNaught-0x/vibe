@@ -30,6 +30,17 @@ Supports streaming and is best suited for dictation.
 [👉 View Model](https://huggingface.co/vibe-app/nemotron-3.5-asr-streaming-0.6b-gguf)  
 [🔽 Download Q4_K_M](https://huggingface.co/vibe-app/nemotron-3.5-asr-streaming-0.6b-gguf/resolve/main/nemotron-3.5-asr-streaming-0.6b-Q4_K_M.gguf?download=true)
 
+### 🧠 Nemotron 3.5 Transcribe 30B-A4B
+
+NVIDIA's speech-LLM: the most accurate transcripts, with punctuation, in 40 languages. It needs a lot of memory (Apple Silicon with 32 GB or more, or an NVIDIA GPU with 16 GB or more) and is slower than Whisper. On first use, Vibe downloads the 1.7 GB speech encoder next to the model and NVIDIA's NeMo-Speech.cpp runtime. The prompt in Vibe settings is passed to the model as names and terms to spell correctly.
+
+[👉 View Model](https://huggingface.co/AtomicChat/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF)  
+[🔽 Download IQ4_NL (19.7 GB, recommended)](https://huggingface.co/AtomicChat/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF/resolve/main/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-AD-IQ4_NL.gguf?download=true)  
+[🔽 Download Q2_0_L (15.5 GB, for 24 GB Macs)](https://huggingface.co/AtomicChat/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF/resolve/main/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-AD-Q2_0_L.gguf?download=true)  
+[🔽 Download Q8_0 (35.0 GB, closest to the original)](https://huggingface.co/AtomicChat/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-GGUF/resolve/main/NVIDIA-Nemotron-3.5-Transcribe-30B-A4B-Q8_0.gguf?download=true)
+
+The other builds (Q5_0_XL, IQ4_NL_L, Q2_0_M) on the model page work as well.
+
 ### Models optimised for other languages
 
 <details>
