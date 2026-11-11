@@ -81,6 +81,9 @@ pub struct Segment {
     /// Word timings, empty when the engine has none for this run (whisper
     /// without `word_timestamps`).
     pub words: Vec<Word>,
+    /// Zero-based speaker, from an engine that tells speakers apart itself
+    /// (`TranscribeOptions::diarize`); `None` from every other engine.
+    pub speaker: Option<usize>,
 }
 
 /// One word of a [`Segment`]. Times are centiseconds. The text keeps its

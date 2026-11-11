@@ -1,5 +1,6 @@
 //! The `nemo-speech serve` child: started through a guard so it never outlives this server,
 //! bound to localhost with a random API key, and fed audio in memory over chat completions.
+use super::speakers::{single_tagged_speaker, speaker_runs, split_text, TimedWord};
 use super::{MAX_CHUNK_SECONDS, SAMPLE_RATE};
 use anyhow::{bail, Context as _};
 use base64::Engine as _;
@@ -374,6 +375,9 @@ pub(super) struct Transcription {
     duration: f64,
     #[serde(default)]
     subtitle_cues: Vec<Cue>,
+    /// Each word's time and the speaker the encoder's speaker branch heard say it.
+    #[serde(default)]
+    words: Vec<TimedWord>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -381,34 +385,76 @@ struct Cue {
     start: f64,
     end: f64,
     text: String,
+    /// The cue's words, as indices into [`Transcription::words`].
+    first_word: Option<usize>,
+    last_word: Option<usize>,
 }
 
 impl Transcription {
     /// Subtitle cues as segments, in centiseconds; the whole text when the alignment failed.
-    pub(super) fn segments(&self, offset: f64) -> Vec<Segment> {
-        let segment = |start: f64, end: f64, text: &str| {
+    /// With `diarize`, a cue is split where its words change speaker and every piece carries
+    /// its speaker.
+    pub(super) fn segments(&self, offset: f64, diarize: bool) -> Vec<Segment> {
+        let segment = |start: f64, end: f64, text: &str, speaker: Option<usize>| {
             let text = clean_text(text);
             (!text.is_empty()).then(|| Segment {
                 start: ((start + offset) * 100.0).round() as i64,
                 end: ((end.max(start) + offset) * 100.0).round() as i64,
                 text,
                 no_speech_prob: 0.0,
-                // No word timings from this engine.
+                // Word timings only steer speaker splits here; segments carry none.
                 words: Vec::new(),
+                speaker: speaker.filter(|_| diarize),
             })
         };
         if self.subtitle_cues.is_empty() {
-            return segment(0.0, self.duration, &self.text).into_iter().collect();
+            // Without the alignment there is no time to split at; the model's own tags still
+            // name the speaker when only one speaks.
+            let speaker = single_tagged_speaker(&self.text);
+            return segment(0.0, self.duration, &self.text, speaker).into_iter().collect();
         }
-        self.subtitle_cues
-            .iter()
-            .filter_map(|cue| segment(cue.start, cue.end, &cue.text))
-            .collect()
+        let mut segments = Vec::new();
+        for cue in &self.subtitle_cues {
+            let words = match (cue.first_word, cue.last_word) {
+                (Some(first), Some(last)) if diarize && first <= last => self.words.get(first..=last).unwrap_or_default(),
+                _ => &[],
+            };
+            let runs = speaker_runs(words);
+            if runs.len() <= 1 {
+                let speaker = runs
+                    .first()
+                    .map(|run| run.speaker)
+                    .or_else(|| single_tagged_speaker(&cue.text));
+                segments.extend(segment(cue.start, cue.end, &cue.text, speaker));
+                continue;
+            }
+            let pieces = split_text(&cue.text, words, &runs);
+            for (index, (run, text)) in runs.iter().zip(pieces).enumerate() {
+                let start = if index == 0 { cue.start } else { words[run.first].start };
+                let end = if index == runs.len() - 1 {
+                    cue.end
+                } else {
+                    words[run.last].end
+                };
+                segments.extend(segment(start, end, &text, Some(run.speaker)));
+            }
+        }
+        segments
     }
 }
 
 /// Text without the speaker and event tags the model writes (`<spk:0>`), on one line.
 fn clean_text(text: &str) -> String {
+    let text = strip_tags(text).split_whitespace().collect::<Vec<_>>().join(" ");
+    // Like Whisper, a segment starts with the space that separates it from the previous one,
+    // except in scripts written without spaces.
+    match text.chars().next() {
+        Some(first) if !unspaced_script(first) => format!(" {text}"),
+        _ => text,
+    }
+}
+
+pub(super) fn strip_tags(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut depth = 0usize;
     for c in text.chars() {
@@ -419,16 +465,10 @@ fn clean_text(text: &str) -> String {
             _ => out.push(c),
         }
     }
-    let text = out.split_whitespace().collect::<Vec<_>>().join(" ");
-    // Like Whisper, a segment starts with the space that separates it from the previous one,
-    // except in scripts written without spaces.
-    match text.chars().next() {
-        Some(first) if !unspaced_script(first) => format!(" {text}"),
-        _ => text,
-    }
+    out
 }
 
-fn unspaced_script(c: char) -> bool {
+pub(super) fn unspaced_script(c: char) -> bool {
     matches!(c as u32,
         0x0E00..=0x0E7F // Thai
         | 0x3000..=0x30FF // CJK punctuation, Hiragana, Katakana
@@ -480,7 +520,7 @@ mod tests {
                 {"start":6.2,"end":6.3,"text":"<spk:1>"}]}"#,
         )
         .unwrap();
-        let segments = transcription.segments(10.0);
+        let segments = transcription.segments(10.0, false);
         assert_eq!(segments.len(), 2);
         assert_eq!((segments[0].start, segments[0].end), (1000, 1420));
         assert_eq!(segments[0].text, " Hallo zusammen, heute");
@@ -496,12 +536,77 @@ mod tests {
     #[test]
     fn unaligned_transcripts_become_one_segment() {
         let transcription: Transcription = serde_json::from_str(r#"{"text":"<spk:0> Hi there.","duration":2.5}"#).unwrap();
-        let segments = transcription.segments(0.0);
+        let segments = transcription.segments(0.0, false);
         assert_eq!(segments.len(), 1);
         assert_eq!(
             (segments[0].start, segments[0].end, segments[0].text.as_str()),
             (0, 250, " Hi there.")
         );
+    }
+
+    fn word(word: &str, start: f64, end: f64, speaker: usize) -> String {
+        format!(r#"{{"word":"{word}","start":{start},"end":{end},"speaker":"spk:{speaker}","speaker_slot":{speaker}}}"#)
+    }
+
+    fn spans(segments: &[Segment]) -> Vec<(i64, i64, &str, Option<usize>)> {
+        segments
+            .iter()
+            .map(|s| (s.start, s.end, s.text.as_str(), s.speaker))
+            .collect()
+    }
+
+    /// The shape NeMo-Speech.cpp 0.3.0 returned for a two-voice recording, trimmed.
+    fn two_speakers() -> Transcription {
+        let words = [
+            word("Hello", 0.0, 0.478, 0),
+            word("Daniel,", 0.478, 1.116, 0),
+            word("Yes,", 4.08, 4.861, 1),
+            word("I", 4.861, 5.021, 1),
+            word("read", 5.021, 5.26, 1),
+            word("it.", 5.26, 5.419, 1),
+            word("Great.", 8.81, 9.404, 0),
+        ];
+        serde_json::from_str(&format!(
+            r#"{{"text":"<spk:0> Hello Daniel, <spk:1> Yes, I read it. <spk:0> Great.","duration":11.87,
+                "words":[{}],
+                "subtitle_cues":[
+                    {{"first_word":0,"last_word":1,"start":0.0,"end":3.93,"text":"Hello Daniel,"}},
+                    {{"first_word":2,"last_word":6,"start":4.08,"end":11.69,"text":"Yes, I read\nit. Great."}}],
+                "diarization_timestamps":[{{"speaker":0,"start":0.0,"end":3.93}}]}}"#,
+            words.join(",")
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn native_speakers_label_cues_and_split_them_where_the_speaker_changes() {
+        let segments = two_speakers().segments(1.0, true);
+        assert_eq!(
+            spans(&segments),
+            [
+                (100, 493, " Hello Daniel,", Some(0)),
+                (508, 642, " Yes, I read it.", Some(1)),
+                (981, 1269, " Great.", Some(0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn without_diarization_cues_stay_whole_and_unlabelled() {
+        let segments = two_speakers().segments(0.0, false);
+        assert_eq!(
+            spans(&segments),
+            [(0, 393, " Hello Daniel,", None), (408, 1169, " Yes, I read it. Great.", None)]
+        );
+    }
+
+    #[test]
+    fn an_unaligned_transcript_keeps_a_speaker_only_when_one_is_tagged() {
+        let one: Transcription = serde_json::from_str(r#"{"text":"<spk:1> Hi. <spk:1> There.","duration":2.0}"#).unwrap();
+        assert_eq!(one.segments(0.0, true)[0].speaker, Some(1));
+        assert_eq!(one.segments(0.0, false)[0].speaker, None);
+        let two: Transcription = serde_json::from_str(r#"{"text":"<spk:0> Hi. <spk:1> Yo.","duration":2.0}"#).unwrap();
+        assert_eq!(two.segments(0.0, true)[0].speaker, None);
     }
 
     #[test]

@@ -32,6 +32,9 @@ pub struct TranscribeOptions {
     pub beam_size: i32,
     pub stable_timestamps: bool,
     pub vad_model_path: Option<String>,
+    /// Ask an engine with built-in diarization to label each segment's speaker.
+    /// Engines without it ignore this.
+    pub diarize: bool,
 }
 
 impl Default for TranscribeOptions {
@@ -52,6 +55,7 @@ impl Default for TranscribeOptions {
             beam_size: 0,
             stable_timestamps: false,
             vad_model_path: None,
+            diarize: false,
         }
     }
 }

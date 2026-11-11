@@ -37,6 +37,16 @@ pub struct ModelCapabilities {
     pub translation: bool,
     pub timestamps: bool,
     pub text_prompts: bool,
+    /// Older servers do not report these: stable timestamps then apply as before, and
+    /// speakers need the separate diarization model.
+    #[serde(default = "default_true")]
+    pub stable_timestamps: bool,
+    #[serde(default)]
+    pub native_diarization: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -292,6 +302,10 @@ impl ServerProcess {
             if !model.is_empty() {
                 form = form.text("diarize_model", model.clone());
             }
+        }
+        // Speakers from a model that tells them apart itself, without `diarize_model`.
+        if options.diarize.unwrap_or(false) {
+            form = form.text("diarize", "true");
         }
         if options.stable_timestamps.unwrap_or(false) {
             form = form.text("stable_timestamps", "true");

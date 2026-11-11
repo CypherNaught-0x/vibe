@@ -26,7 +26,8 @@ pub struct Turn {
 }
 
 /// Splits `segment` into one [`Turn`] per run of the same speaker. A segment
-/// without word timings, or a request without diarization, stays whole.
+/// without word timings, or a request without diarization, stays whole. A segment
+/// whose engine labelled its speaker itself keeps that speaker.
 pub fn attribute(segment: &Segment, turns: &[diarization::Segment]) -> Vec<Turn> {
     let whole = |speaker| Turn {
         start: segment.start,
@@ -35,6 +36,9 @@ pub fn attribute(segment: &Segment, turns: &[diarization::Segment]) -> Vec<Turn>
         speaker,
         no_speech_prob: segment.no_speech_prob,
     };
+    if segment.speaker.is_some() {
+        return vec![whole(segment.speaker)];
+    }
     if turns.is_empty() {
         return vec![whole(None)];
     }
@@ -146,6 +150,7 @@ mod tests {
             text: words.iter().map(|w| w.text.as_str()).collect::<String>().trim().to_owned(),
             no_speech_prob: 0.0,
             words,
+            speaker: None,
         }
     }
 
@@ -207,9 +212,16 @@ mod tests {
     #[test]
     fn trailing_words_far_from_every_turn_stay_unassigned() {
         let turns = [turn(0.0, 1.0, 0)];
-        let segment = segment(vec![word(10, 90, " yes"), word(500, 560, " these"), word(560, 620, " academics")]);
+        let segment = segment(vec![
+            word(10, 90, " yes"),
+            word(500, 560, " these"),
+            word(560, 620, " academics"),
+        ]);
         let result = attribute(&segment, &turns);
-        assert_eq!(spans(&result), [(Some(0), 10, 90, "yes"), (None, 500, 620, "these academics")]);
+        assert_eq!(
+            spans(&result),
+            [(Some(0), 10, 90, "yes"), (None, 500, 620, "these academics")]
+        );
     }
 
     #[test]
@@ -218,6 +230,14 @@ mod tests {
         let mut segment = segment(vec![word(0, 900, " whole")]);
         segment.words.clear();
         assert_eq!(spans(&attribute(&segment, &turns)), [(Some(1), 0, 900, "whole")]);
+    }
+
+    #[test]
+    fn an_engine_labelled_speaker_wins_over_turns() {
+        let mut segment = segment(vec![word(0, 50, " a"), word(60, 90, " b")]);
+        segment.speaker = Some(3);
+        assert_eq!(spans(&attribute(&segment, &[])), [(Some(3), 0, 90, "a b")]);
+        assert_eq!(spans(&attribute(&segment, &[turn(0.0, 1.0, 0)])), [(Some(3), 0, 90, "a b")]);
     }
 
     #[test]

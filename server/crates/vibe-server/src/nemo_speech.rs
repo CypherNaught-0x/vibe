@@ -9,6 +9,8 @@
 mod runtime;
 #[path = "nemo_speech_server.rs"]
 mod server;
+#[path = "nemo_speech_speakers.rs"]
+mod speakers;
 pub use server::{run_guard, GUARD_ARG};
 
 use anyhow::{bail, Context as _};
@@ -55,6 +57,10 @@ pub fn capabilities() -> crate::engine::EngineCapabilities {
         timestamps: true,
         // The prompt reaches the model as "Context terms", which steers spelling.
         text_prompts: true,
+        // The encoder's CTC head times every word, so there is nothing for a VAD to steady.
+        stable_timestamps: false,
+        // The encoder's speaker branch labels every word with one of up to eight speakers.
+        native_diarization: true,
     }
 }
 
@@ -125,7 +131,7 @@ impl Model {
                     return Err(error);
                 }
             };
-            for segment in transcription.segments(offset) {
+            for segment in transcription.segments(offset, options.diarize) {
                 if let Some(callback) = callbacks.on_segment.as_mut() {
                     callback(segment.clone());
                 }

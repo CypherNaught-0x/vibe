@@ -6,7 +6,6 @@ import { toast } from 'sonner'
 import successSound from '~/assets/success.mp3'
 import { m } from '~/paraglide/messages.js'
 import { trackGpuOutOfMemory, trackTranscribeCancelled, trackTranscribeFailed, trackTranscribeStarted, trackTranscribeSucceeded } from '~/lib/analytics'
-import * as config from '~/lib/config'
 import { KEEP_AWAKE, startKeepAwake, stopKeepAwake } from '~/lib/keep-awake'
 import { validPath } from '~/lib/media'
 import { exportTranscript, sharedFolder, summarizeResults, tauriExportIo, type AutoExportResult } from '~/lib/auto-export'
@@ -23,7 +22,7 @@ export { reconcileProjectName } from './use-project-persistence'
 import type { NamedPath, ProjectSource } from '~/lib/types'
 import { ErrorModalContext } from '~/providers/error-modal'
 import { useModelGates } from '~/providers/model-gates'
-import { withoutUnsupportedOptions } from '~/lib/model'
+import { hasNativeDiarization, needsModelsFolder, speakerAndTimingOptions, withoutUnsupportedOptions } from '~/lib/model'
 import { type Preference, usePreferenceProvider } from '~/providers/preference'
 
 export type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
@@ -141,15 +140,9 @@ function nextJobId() {
 
 /** Options shared by every file of a run (diarize / vad model paths). */
 async function buildSharedOptions(preference: Preference) {
-	const requiresVad = preference.modelMetadata?.capabilities.requires_vad ?? false
-	const stableTimestamps = preference.stableTimestampsEnabled && preference.modelMetadata?.capabilities.timestamps !== false
-	const needsFolder = preference.diarizeEnabled || stableTimestamps || requiresVad
-	const modelsFolder = needsFolder ? await invoke<string>('get_models_folder') : null
-	return {
-		...(preference.diarizeEnabled ? { diarize_model: `${modelsFolder}/${config.diarizeModelFilename}` } : {}),
-		...(stableTimestamps || requiresVad ? { vad_model: `${modelsFolder}/${config.vadModelFilename}` } : {}),
-		...(stableTimestamps ? { stable_timestamps: true } : {}),
-	}
+	const capabilities = preference.modelMetadata?.capabilities
+	const modelsFolder = needsModelsFolder(preference, capabilities) ? await invoke<string>('get_models_folder') : null
+	return speakerAndTimingOptions(preference, capabilities, modelsFolder)
 }
 
 /** Reload the current model on the CPU. False when even that failed, so the original error stands. */
@@ -355,7 +348,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 				// transcribing without speakers. Declining, or a failed download, turns the setting off and
 				// the run goes on.
 				let options = current
-				if (current.diarizeEnabled) {
+				if (current.diarizeEnabled && !hasNativeDiarization(current.modelMetadata?.capabilities)) {
 					const ready = await ensureDiarizeModel().catch((error) => {
 						console.error('diarization model download failed:', error)
 						toast.error(String(error), { position: 'bottom-center' })

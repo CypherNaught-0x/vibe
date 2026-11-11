@@ -48,6 +48,9 @@ pub struct TranscribeOptions {
     pub best_of: Option<i32>,
     pub beam_size: Option<i32>,
     pub diarize_model: Option<String>,
+    /// Ask a model with built-in diarization for speakers; it needs no `diarize_model`.
+    #[serde(default)]
+    pub diarize: Option<bool>,
     pub stable_timestamps: Option<bool>,
     pub vad_model: Option<String>,
     #[serde(default)]

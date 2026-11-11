@@ -60,6 +60,8 @@ pub(in crate::server) async fn model_metadata(Json(request): Json<ModelMetadataR
                     translation: false,
                     timestamps: true,
                     text_prompts: false,
+                    stable_timestamps: true,
+                    native_diarization: false,
                 });
             }
         }
@@ -74,6 +76,8 @@ pub(in crate::server) async fn model_metadata(Json(request): Json<ModelMetadataR
                 translation: false,
                 timestamps: true,
                 text_prompts: false,
+                stable_timestamps: true,
+                native_diarization: false,
             }),
             Ok(info) => Err(format!(
                 "unsupported GGUF architecture '{}' with head '{}'",

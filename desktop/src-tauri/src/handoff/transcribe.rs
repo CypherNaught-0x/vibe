@@ -210,6 +210,7 @@ impl HandoffHandler {
             best_of: None,
             beam_size: None,
             diarize_model: None,
+            diarize: None,
             stable_timestamps: None,
             vad_model,
         };

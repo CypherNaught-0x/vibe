@@ -70,3 +70,18 @@ fn stderr_tail_reports_a_read_failure_instead_of_looking_empty() {
     assert!(tail.is_finished());
     assert!(tail.snapshot().contains("stream did not contain valid UTF-8"));
 }
+
+#[test]
+fn capabilities_from_an_older_server_keep_stable_timestamps_and_external_diarization() {
+    let old = r#"{"engine":"whisper","requires_vad":false,"languages":["en"],"language_detection":true,
+        "streaming":true,"translation":true,"timestamps":true,"text_prompts":true}"#;
+    let capabilities: super::ModelCapabilities = serde_json::from_str(old).unwrap();
+    assert!(capabilities.stable_timestamps);
+    assert!(!capabilities.native_diarization);
+    let native: super::ModelCapabilities = serde_json::from_str(&old.replace(
+        "\"text_prompts\":true",
+        "\"text_prompts\":true,\"stable_timestamps\":false,\"native_diarization\":true",
+    ))
+    .unwrap();
+    assert!(!native.stable_timestamps && native.native_diarization);
+}

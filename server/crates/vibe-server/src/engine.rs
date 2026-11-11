@@ -15,6 +15,12 @@ pub struct EngineCapabilities {
     pub translation: bool,
     pub timestamps: bool,
     pub text_prompts: bool,
+    /// Whether the VAD-backed `stable_timestamps` mode applies. Engines that time words
+    /// themselves ignore it.
+    pub stable_timestamps: bool,
+    /// Whether the engine tells speakers apart itself: a request asking for speakers
+    /// (`diarize`, or `diarize_model`) uses its labels and loads no diarization model.
+    pub native_diarization: bool,
 }
 
 // One engine lives at a time, so the size gap between variants costs nothing.
@@ -251,6 +257,8 @@ impl Engine {
                 translation: false,
                 timestamps: true,
                 text_prompts: false,
+                stable_timestamps: true,
+                native_diarization: false,
             },
             Self::Parakeet { model, .. } => EngineCapabilities {
                 engine: "parakeet".to_string(),
@@ -261,6 +269,8 @@ impl Engine {
                 translation: false,
                 timestamps: true,
                 text_prompts: false,
+                stable_timestamps: true,
+                native_diarization: false,
             },
         }
     }
@@ -276,6 +286,8 @@ pub fn whisper_capabilities() -> EngineCapabilities {
         translation: true,
         timestamps: true,
         text_prompts: true,
+        stable_timestamps: true,
+        native_diarization: false,
     }
 }
 
@@ -292,6 +304,7 @@ fn nemotron_segment(transcription: &nemotron_rs::Transcription, tokenizer: &nemo
         text: transcription.text.clone(),
         no_speech_prob: 0.0,
         words: piece_words(&tokens, |id| tokenizer.piece(id), |ids| tokenizer.decode(ids)),
+        speaker: None,
     })
 }
 
@@ -328,6 +341,7 @@ fn parakeet_segment(transcription: &parakeet_rs::Transcription, tokenizer: &para
         text: transcription.text.clone(),
         no_speech_prob: 0.0,
         words: piece_words(&tokens, |id| tokenizer.piece(id), |ids| tokenizer.decode(ids)),
+        speaker: None,
     })
 }
 

@@ -14,6 +14,7 @@ use crate::server::transcription::build_options;
 use crate::server::unload_timeout::ModelLease;
 use crate::server::{error, format, speakers};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn stream_transcription(
     config: AppConfig,
     mut model: ModelLease,
@@ -22,6 +23,7 @@ pub(super) fn stream_transcription(
     stable_timestamps: bool,
     vad_model_path: Option<String>,
     diar_segments: Vec<diarization::Segment>,
+    native_diarization: bool,
 ) -> Result<Response, Box<Response>> {
     if model.ctx.is_none() {
         return Err(Box::new(error(
@@ -44,6 +46,7 @@ pub(super) fn stream_transcription(
         stable_timestamps,
         vad_model_path,
         !diar_segments.is_empty(),
+        native_diarization,
     );
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<bytes::Bytes, std::convert::Infallible>>();
     let aborted = Arc::new(AtomicBool::new(false));

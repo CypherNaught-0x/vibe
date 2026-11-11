@@ -96,6 +96,7 @@ fn convert(segment: &FullSegment, vocab: &Vocab) -> Segment {
         text: segment.text.clone(),
         no_speech_prob: segment.no_speech_prob,
         words: words(segment, vocab),
+        speaker: None,
     }
 }
 

@@ -2,10 +2,14 @@ import { ChevronRight, SlidersHorizontal, AudioLines } from 'lucide-react'
 import { DEFAULT_MODEL_OPTIONS } from '~/providers/preference'
 import { m } from '~/paraglide/messages.js'
 import { Switch } from '~/components/ui/switch'
+import { hasNativeDiarization, supportsStableTimestamps } from '~/lib/model'
 import { ActionRow, SettingsGroup, SettingsNote, SettingsRow, type SettingsViewModel } from './shared'
 
 export function TuningSection({ vm, onOpenWhisper, onOpenAudio }: { vm: SettingsViewModel; onOpenWhisper: () => void; onOpenAudio: () => void }) {
 	const options = vm.preference.modelOptions
+	const capabilities = vm.preference.modelMetadata?.capabilities
+	const stableTimestamps = supportsStableTimestamps(capabilities)
+	const nativeSpeakers = hasNativeDiarization(capabilities)
 	const customized =
 		Boolean(options.translate) ||
 		(Object.keys(DEFAULT_MODEL_OPTIONS) as (keyof typeof DEFAULT_MODEL_OPTIONS)[])
@@ -15,14 +19,15 @@ export function TuningSection({ vm, onOpenWhisper, onOpenAudio }: { vm: Settings
 	return (
 		<div className="space-y-6">
 			<SettingsGroup>
-				<SettingsRow label={m.enableDiarization()} description={m.infoDiarization()}>
+				<SettingsRow label={m.enableDiarization()} description={nativeSpeakers ? m.infoDiarizationNative() : m.infoDiarization()}>
 					<Switch checked={vm.preference.diarizeEnabled} onCheckedChange={vm.toggleDiarization} />
 				</SettingsRow>
 				{vm.preference.diarizeEnabled && <SettingsNote>{m.diarizeMaxSpeakersNote()}</SettingsNote>}
-				<SettingsRow label={m.enableStableTimestamps()} description={m.stableTimestampsInfo()}>
-					<Switch checked={vm.preference.stableTimestampsEnabled} onCheckedChange={vm.handleStableTimestampsToggle} />
+				{/* The saved choice stays for the next model that can use it; this one times words itself. */}
+				<SettingsRow label={m.enableStableTimestamps()} description={stableTimestamps ? m.stableTimestampsInfo() : m.stableTimestampsBuiltIn()}>
+					<Switch checked={stableTimestamps && vm.preference.stableTimestampsEnabled} disabled={!stableTimestamps} onCheckedChange={vm.handleStableTimestampsToggle} />
 				</SettingsRow>
-				{vm.preference.stableTimestampsEnabled && <SettingsNote>{m.stableTimestampsSlowNote()}</SettingsNote>}
+				{stableTimestamps && vm.preference.stableTimestampsEnabled && <SettingsNote>{m.stableTimestampsSlowNote()}</SettingsNote>}
 			</SettingsGroup>
 			<SettingsGroup>
 				<ActionRow

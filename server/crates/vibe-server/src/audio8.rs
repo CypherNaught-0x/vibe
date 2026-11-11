@@ -65,6 +65,8 @@ pub fn capabilities() -> crate::engine::EngineCapabilities {
         translation: false,
         timestamps: false,
         text_prompts: false,
+        stable_timestamps: false,
+        native_diarization: false,
     }
 }
 
@@ -384,6 +386,7 @@ impl Model {
                         no_speech_prob: 0.0,
                         // No word timings from this engine.
                         words: Vec::new(),
+                        speaker: None,
                     };
                     if let Some(callback) = callbacks.on_segment.as_mut() {
                         callback(segment.clone());

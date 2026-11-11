@@ -136,7 +136,7 @@ function runTranscribe(
 			return
 		}
 
-		const diarize = typeof options.diarize_model === 'string' && options.diarize_model.length > 0
+		const diarize = options.diarize === true || (typeof options.diarize_model === 'string' && options.diarize_model.length > 0)
 		const segments: Segment[] = sampleSegments.map((segment, index) =>
 			diarize ? { ...segment, speaker: index % 2 } : { start: segment.start, stop: segment.stop, text: segment.text },
 		)

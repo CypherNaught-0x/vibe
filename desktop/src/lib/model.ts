@@ -188,6 +188,10 @@ export interface ModelCapabilities {
 	translation: boolean
 	timestamps: boolean
 	text_prompts: boolean
+	/** Whether the VAD-backed stable timestamps apply. Absent from older servers: they do. */
+	stable_timestamps?: boolean
+	/** Whether the model tells speakers apart itself, without the diarization model. */
+	native_diarization?: boolean
 }
 
 export interface ModelMetadata {
@@ -217,5 +221,46 @@ export function withoutUnsupportedOptions<T extends EngineSpecificOptions>(optio
 		delete next.word_timestamps
 		delete next.stable_timestamps
 	}
+	if (capabilities.stable_timestamps === false) delete next.stable_timestamps
 	return next
+}
+
+/** False for models that time words themselves (Nemotron 3.5 Transcribe), where the VAD pass adds nothing. */
+export function supportsStableTimestamps(capabilities: ModelCapabilities | null | undefined) {
+	return capabilities?.timestamps !== false && capabilities?.stable_timestamps !== false
+}
+
+/** True when speaker recognition comes from the model itself, so no diarization model is needed. */
+export function hasNativeDiarization(capabilities: ModelCapabilities | null | undefined) {
+	return capabilities?.native_diarization === true
+}
+
+/**
+ * The speaker and timing options of a run. "Recognize speakers" means the same everywhere; a model
+ * with its own diarization gets `diarize` instead of the separate model's path, and one that times
+ * words itself never gets stable timestamps or a VAD it does not need.
+ */
+export function speakerAndTimingOptions(
+	preference: { diarizeEnabled: boolean; stableTimestampsEnabled: boolean },
+	capabilities: ModelCapabilities | null | undefined,
+	modelsFolder: string | null,
+) {
+	const requiresVad = capabilities?.requires_vad ?? false
+	const stableTimestamps = preference.stableTimestampsEnabled && supportsStableTimestamps(capabilities)
+	const native = hasNativeDiarization(capabilities)
+	return {
+		...(preference.diarizeEnabled && native ? { diarize: true } : {}),
+		...(preference.diarizeEnabled && !native ? { diarize_model: `${modelsFolder}/${diarizeModelFilename}` } : {}),
+		...(stableTimestamps || requiresVad ? { vad_model: `${modelsFolder}/${vadModelFilename}` } : {}),
+		...(stableTimestamps ? { stable_timestamps: true } : {}),
+	}
+}
+
+/** Whether {@link speakerAndTimingOptions} will name a file in the models folder. */
+export function needsModelsFolder(preference: { diarizeEnabled: boolean; stableTimestampsEnabled: boolean }, capabilities: ModelCapabilities | null | undefined) {
+	return (
+		(preference.diarizeEnabled && !hasNativeDiarization(capabilities)) ||
+		(preference.stableTimestampsEnabled && supportsStableTimestamps(capabilities)) ||
+		(capabilities?.requires_vad ?? false)
+	)
 }

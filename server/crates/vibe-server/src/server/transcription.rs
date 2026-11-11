@@ -24,9 +24,10 @@ pub(super) async fn transcribe(
     request: TranscriptionRequest,
 ) -> Result<Response, Response> {
     let TranscriptionRequest { file, form } = request;
-    let (diarize_model, enhance_audio, stable_timestamps, vad_model_path, stream, response_format) = {
+    let (diarize, diarize_model, enhance_audio, stable_timestamps, vad_model_path, stream, response_format) = {
         let values = FormValues::new(&form);
         (
+            values.bool("diarize"),
             values.string("diarize_model"),
             values.bool("enhance_audio"),
             values.bool("stable_timestamps"),
@@ -53,9 +54,16 @@ pub(super) async fn transcribe(
         )
     })?;
 
-    let diar_segments = diarize_model
-        .as_deref()
-        .map_or_else(Vec::new, |model_path| diarization::diarize(model_path, &samples));
+    let capabilities = model.ctx.as_ref().map(|ctx| ctx.capabilities());
+    let speakers = Speakers::choose(diarize, diarize_model, capabilities.as_ref());
+    // An engine that times words itself has no use for the VAD pass; a client that still
+    // asks for it gets the engine's own timings rather than an error.
+    let stable_timestamps = stable_timestamps && capabilities.as_ref().is_none_or(|caps| caps.stable_timestamps);
+    let diar_segments = match &speakers {
+        Speakers::External(model_path) => diarization::diarize(model_path, &samples),
+        Speakers::Off | Speakers::Native => Vec::new(),
+    };
+    let native = speakers == Speakers::Native;
 
     if stable_timestamps && vad_model_path.is_none() {
         return Err(error(
@@ -66,8 +74,17 @@ pub(super) async fn transcribe(
     }
 
     if stream {
-        return stream_transcription(config, model, samples, form, stable_timestamps, vad_model_path, diar_segments)
-            .map_err(|err| *err);
+        return stream_transcription(
+            config,
+            model,
+            samples,
+            form,
+            stable_timestamps,
+            vad_model_path,
+            diar_segments,
+            native,
+        )
+        .map_err(|err| *err);
     }
 
     let verbose = config.verbose();
@@ -84,7 +101,14 @@ pub(super) async fn transcribe(
         ));
     }
 
-    let opts = build_options(&form, verbose, stable_timestamps, vad_model_path, !diar_segments.is_empty());
+    let opts = build_options(
+        &form,
+        verbose,
+        stable_timestamps,
+        vad_model_path,
+        !diar_segments.is_empty(),
+        native,
+    );
     let result = ctx.transcribe(&samples, opts).map_err(|err| {
         tracing::error!(samples = samples.len(), "transcription failed: {err:#}");
         error(
@@ -97,14 +121,44 @@ pub(super) async fn transcribe(
     Ok(format_response(&response_format, &result, &diar_segments))
 }
 
+/// Where a request's speakers come from.
+#[derive(Debug, PartialEq)]
+pub(super) enum Speakers {
+    Off,
+    /// The engine labels speakers itself; no diarization model is loaded.
+    Native,
+    /// A separate diarization model at this path, attributed by word timings.
+    External(String),
+}
+
+impl Speakers {
+    /// `diarize` or a `diarize_model` asks for speakers. An engine with its own diarization
+    /// answers that itself, so the separate model is never loaded for it.
+    pub(super) fn choose(
+        diarize: bool,
+        diarize_model: Option<String>,
+        capabilities: Option<&crate::engine::EngineCapabilities>,
+    ) -> Self {
+        if !diarize && diarize_model.is_none() {
+            return Self::Off;
+        }
+        if capabilities.is_some_and(|caps| caps.native_diarization) {
+            return Self::Native;
+        }
+        diarize_model.map_or(Self::Off, Self::External)
+    }
+}
+
 /// `diarized` asks the engine for word timings, which speaker attribution splits
 /// segments on. Parakeet and Nemotron always have them; whisper computes them on request.
+/// `native_diarization` asks an engine with its own diarization to label speakers.
 pub(super) fn build_options(
     form: &HashMap<String, String>,
     verbose: bool,
     stable_timestamps: bool,
     vad_model_path: Option<String>,
     diarized: bool,
+    native_diarization: bool,
 ) -> TranscribeOptions {
     let values = FormValues::new(form);
     TranscribeOptions {
@@ -123,6 +177,7 @@ pub(super) fn build_options(
         beam_size: values.i32("beam_size"),
         stable_timestamps,
         vad_model_path,
+        diarize: native_diarization,
     }
 }
 
@@ -145,5 +200,40 @@ fn format_response(
         )
             .into_response(),
         _ => Json(TextResponse { text: result.text() }).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn caps(native_diarization: bool) -> crate::engine::EngineCapabilities {
+        crate::engine::EngineCapabilities {
+            native_diarization,
+            ..crate::engine::whisper_capabilities()
+        }
+    }
+
+    #[test]
+    fn a_native_engine_answers_speakers_without_the_diarization_model() {
+        let model = || Some("/models/diar.gguf".to_owned());
+        assert_eq!(Speakers::choose(false, model(), Some(&caps(true))), Speakers::Native);
+        assert_eq!(Speakers::choose(true, None, Some(&caps(true))), Speakers::Native);
+        assert_eq!(Speakers::choose(false, None, Some(&caps(true))), Speakers::Off);
+    }
+
+    #[test]
+    fn other_engines_keep_the_diarization_model() {
+        let model = || Some("/models/diar.gguf".to_owned());
+        assert_eq!(
+            Speakers::choose(false, model(), Some(&caps(false))),
+            Speakers::External("/models/diar.gguf".to_owned())
+        );
+        assert_eq!(
+            Speakers::choose(false, model(), None),
+            Speakers::External("/models/diar.gguf".to_owned())
+        );
+        // `diarize` alone names no model for an engine that needs one.
+        assert_eq!(Speakers::choose(true, None, Some(&caps(false))), Speakers::Off);
     }
 }
