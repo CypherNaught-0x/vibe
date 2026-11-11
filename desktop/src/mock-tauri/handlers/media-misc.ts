@@ -1,6 +1,7 @@
 import { emitMockEvent, onMockEvent } from '../event-bus'
 import { APP_LOCAL_DATA, DOCUMENTS_FOLDER, HOME_FOLDER, virtualFs } from '../state'
 import type { CommandHandlerMap } from '../types'
+import { toRecordingFormat } from '~/lib/recording-format'
 
 let tempPathCounter = 0
 
@@ -69,7 +70,8 @@ export const mediaMiscHandlers: CommandHandlerMap = {
 
 	start_record: (args) => {
 		console.info('[mock] start_record', args)
-		const path = `${APP_LOCAL_DATA}/recording.wav`
+		// Same extension the real command stores: the chosen format, Opus when absent or unknown.
+		const path = `${APP_LOCAL_DATA}/recording.${toRecordingFormat(args?.recordingFormat)}`
 		// Stand in for the capture callbacks: a level event every 100ms, like the throttled Rust side.
 		let tick = 0
 		const levelTimer = window.setInterval(() => {
@@ -80,6 +82,7 @@ export const mediaMiscHandlers: CommandHandlerMap = {
 		const unsub = onMockEvent('stop_record', () => {
 			unsub()
 			window.clearInterval(levelTimer)
+			emitMockEvent('record_stopping', null)
 			setTimeout(() => {
 				virtualFs.set(path, null)
 				emitMockEvent('record_finish', { path, name: basename(path) })

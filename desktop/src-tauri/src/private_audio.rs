@@ -493,6 +493,7 @@ pub fn start_record(app: AppHandle, devices: Vec<AudioDevice>, recording_name: O
         let _lease = lease;
         let stop = receiver.recv();
         thread_app.unlisten(listener);
+        let _ = thread_app.emit("record_stopping", ());
         for stream in &streams {
             let _ = stream.0.pause();
         }

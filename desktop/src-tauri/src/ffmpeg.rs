@@ -2,9 +2,8 @@ use chrono::Local;
 use eyre::{bail, ContextCompat, Result};
 use rand::distr::Alphanumeric;
 use rand::Rng;
-use std::io::Read;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use which::which;
 
 pub fn get_local_time() -> String {
@@ -69,79 +68,65 @@ pub fn find_ffmpeg_path() -> Option<PathBuf> {
     None
 }
 
-pub fn normalize(input: PathBuf, output: PathBuf, additional_ffmpeg_args: Option<Vec<String>>) -> Result<()> {
+fn command() -> Result<Command> {
     let ffmpeg_path = find_ffmpeg_path().context("ffmpeg not found")?;
-    tracing::debug!("ffmpeg path is {}", ffmpeg_path.display());
-
     let mut cmd = Command::new(ffmpeg_path);
-    let cmd = cmd.stderr(Stdio::piped()).args([
-        "-i",
-        input.to_str().context("tostr")?,
-        "-ar",
-        "16000",
-        "-ac",
-        "1",
-        "-c:a",
-        "pcm_s16le",
-    ]);
-
-    cmd.args(additional_ffmpeg_args.unwrap_or_default());
-
-    cmd.args([output.to_str().context("tostr")?, "-hide_banner", "-y", "-loglevel", "error"]);
-
-    tracing::debug!("cmd: {:?}", cmd);
-
-    let cmd = cmd.stdin(Stdio::null());
-
-    #[cfg(windows)]
-    let cmd = cmd.creation_flags(CREATE_NO_WINDOW);
-
-    let mut pid = cmd.spawn()?;
-    if !pid.wait()?.success() {
-        let mut stderr_output = String::new();
-        if let Some(ref mut stderr) = pid.stderr {
-            stderr.take(1000).read_to_string(&mut stderr_output)?;
-        }
-        bail!("unable to convert file: {:?} args: {:?}", stderr_output, cmd.get_args());
-    }
-
-    if !output.exists() {
-        bail!("seems like ffmpeg failed for some reason. output not exists")
-    }
-    Ok(())
-}
-
-pub fn merge_wav_files(a: PathBuf, b: PathBuf, dst: PathBuf) -> Result<()> {
-    let ffmpeg_path = find_ffmpeg_path().context("ffmpeg not found")?;
-    let output = dst.to_str().context("tostr")?;
-
-    let mut cmd = Command::new(ffmpeg_path);
-    cmd.args([
-        "-i",
-        a.to_str().context("tostr")?,
-        "-i",
-        b.to_str().context("tostr")?,
-        "-filter_complex",
-        // amix averages by default, which costs 6 dB on a two-input mix, and `-ac 2` used to
-        // add another 3 dB of mono->stereo rematrix on top -- 9 dB thrown away on every
-        // recording that had system audio selected. Sum instead, and let normalize() do the
-        // single downmix to mono rather than producing stereo here just to collapse it later.
-        // Summing can clip when the mic and the meeting are both loud, so cap the peaks.
-        "amix=inputs=2:duration=longest:dropout_transition=0:normalize=0,alimiter=limit=0.97",
-        output,
-        "-hide_banner",
-        "-y",
-        "-loglevel",
-        "error",
-    ])
-    .stdin(Stdio::null());
-
+    cmd.args(["-hide_banner", "-loglevel", "error", "-y"]);
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
+    Ok(cmd)
+}
 
-    let mut pid = cmd.spawn()?;
-    if !pid.wait()?.success() {
-        bail!("unable to merge files");
+/// Mono float PCM at `rate` arrives on stdin and is encoded into `output` as it comes.
+/// `mixed`: several sources were summed upstream, so cap the peaks like the old merge did.
+pub fn spawn_live_encoder(rate: u32, mixed: bool, output_args: &[&str], output: &Path) -> Result<Child> {
+    let mut cmd = command()?;
+    let rate = rate.to_string();
+    cmd.args(["-f", "f32le", "-ar", rate.as_str(), "-ac", "1", "-i", "pipe:0"]);
+    if mixed {
+        cmd.args(["-af", MIX_LIMITER]);
+    }
+    cmd.args(output_args).arg(output);
+    cmd.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped());
+    tracing::debug!("live encoder: {:?}", cmd);
+    Ok(cmd.spawn()?)
+}
+
+/// Peak cap after summing sources; `amix` with `normalize=0` adds them, which can clip.
+const MIX_LIMITER: &str = "alimiter=limit=0.97";
+
+/// One pass from the raw captures to the stored file: mix (when there are two), downmix,
+/// resample and encode. Replaces the old merge-to-WAV + normalize pair, which wrote and
+/// re-read a full intermediate WAV.
+pub fn transcode_recording(inputs: &[PathBuf], output_args: &[&str], output: &Path) -> Result<()> {
+    if inputs.is_empty() {
+        bail!("no recording inputs");
+    }
+    let mut cmd = command()?;
+    for input in inputs {
+        cmd.arg("-i").arg(input);
+    }
+    let graph;
+    if inputs.len() > 1 {
+        // amix averages by default, which costs 6 dB on a two-input mix. Sum instead and cap
+        // the peaks, since the mic and the meeting can both be loud at once.
+        graph = format!(
+            "amix=inputs={}:duration=longest:dropout_transition=0:normalize=0,{MIX_LIMITER}",
+            inputs.len()
+        );
+        cmd.args(["-filter_complex", graph.as_str()]);
+    }
+    cmd.args(output_args).arg(output);
+    cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+    tracing::debug!("transcode recording: {:?}", cmd);
+
+    let result = cmd.output()?;
+    if !result.status.success() {
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        bail!("ffmpeg failed: {}", stderr.chars().take(1000).collect::<String>().trim());
+    }
+    if std::fs::metadata(output).map(|m| m.len()).unwrap_or(0) == 0 {
+        bail!("ffmpeg produced no output");
     }
     Ok(())
 }

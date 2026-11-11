@@ -9,6 +9,7 @@ import { readConfig, usePersisted } from '~/lib/config-store'
 import { getDefaultRecordingShortcut } from '~/lib/config'
 import type { MeetingRecordingOptions } from '~/lib/meeting-prompt'
 import { ensureSystemAudioPermission } from '~/lib/permissions'
+import { defaultRecordingFormat, toRecordingFormat } from '~/lib/recording-format'
 import { m } from '~/paraglide/messages.js'
 import { useHotkeyProvider } from './hotkey'
 
@@ -21,6 +22,8 @@ interface RecordingShortcutContextValue {
 	setRecordingShortcutCapturing: (capturing: boolean) => void
 	/** Keep the global toggle synchronized with recordings started from the regular UI. */
 	setNormalRecordingActive: (active: boolean) => void
+	/** A stopped recording is still being saved: the shortcut neither stops nor starts meanwhile. */
+	setRecordingBusy: (busy: boolean) => void
 	isShortcutRecording: boolean
 }
 
@@ -45,6 +48,7 @@ export function RecordingShortcutProvider({ children }: { children: ReactNode })
 	const [isShortcutRecording, setIsShortcutRecording] = useState(false)
 	const recordingRef = useRef(false)
 	const normalRecordingActiveRef = useRef(false)
+	const busyRef = useRef(false)
 	const startingRef = useRef(false)
 	const stoppingRef = useRef(false)
 	const pressedRef = useRef(false)
@@ -56,7 +60,7 @@ export function RecordingShortcutProvider({ children }: { children: ReactNode })
 	}, [dictation.isHotkeyRecording])
 
 	const startRecording = useCallback(async (options: MeetingRecordingOptions = { microphone: true, systemAudio: false }) => {
-		if (normalRecordingActiveRef.current || startingRef.current || stoppingRef.current) return false
+		if (normalRecordingActiveRef.current || startingRef.current || stoppingRef.current || busyRef.current) return false
 		if (dictationRecordingRef.current) {
 			toast.error(m.recordingAlreadyInProgress())
 			return false
@@ -73,7 +77,11 @@ export function RecordingShortcutProvider({ children }: { children: ReactNode })
 				(device): device is AudioDevice => device != null,
 			)
 			if (selectedDevices.length === 0) throw new Error(m.noDefaultMicrophone())
-			await invoke('start_record', { devices: selectedDevices, recordingName: null })
+			await invoke('start_record', {
+				devices: selectedDevices,
+				recordingName: null,
+				recordingFormat: toRecordingFormat(readConfig<unknown>(CONFIG_KEYS.recordingFormat, defaultRecordingFormat)),
+			})
 			recordingRef.current = true
 			normalRecordingActiveRef.current = true
 			setIsShortcutRecording(true)
@@ -88,7 +96,7 @@ export function RecordingShortcutProvider({ children }: { children: ReactNode })
 	}, [])
 
 	const stopRecording = useCallback(async () => {
-		if (!normalRecordingActiveRef.current || stoppingRef.current) return
+		if (!normalRecordingActiveRef.current || stoppingRef.current || busyRef.current) return
 		stoppingRef.current = true
 		try {
 			await emit('stop_record')
@@ -152,6 +160,7 @@ export function RecordingShortcutProvider({ children }: { children: ReactNode })
 					}
 					if (pressedRef.current) return
 					pressedRef.current = true
+					if (busyRef.current) return
 					if (normalRecordingActiveRef.current) void stopRecording()
 					else void startRecording()
 				})
@@ -193,6 +202,10 @@ export function RecordingShortcutProvider({ children }: { children: ReactNode })
 		normalRecordingActiveRef.current = active
 	}, [])
 
+	const setRecordingBusy = useCallback((busy: boolean) => {
+		busyRef.current = busy
+	}, [])
+
 	return (
 		<RecordingShortcutContext.Provider
 			value={{
@@ -202,6 +215,7 @@ export function RecordingShortcutProvider({ children }: { children: ReactNode })
 				setRecordingShortcut,
 				setRecordingShortcutCapturing,
 				setNormalRecordingActive,
+				setRecordingBusy,
 				isShortcutRecording,
 			}}>
 			{children}

@@ -5,15 +5,25 @@ import { toast } from 'sonner'
 import ShortcutRecorder from '~/components/shortcut-recorder'
 import { MeetingServiceIcons } from '~/components/meeting-service-icons'
 import { Button } from '~/components/ui/button'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '~/components/ui/select'
 import { Switch } from '~/components/ui/switch'
 import { getDefaultRecordingShortcut } from '~/lib/config'
+import { recordingFormats, type RecordingFormat } from '~/lib/recording-format'
 import type { PermissionStatus } from '~/lib/permissions'
 import { m } from '~/paraglide/messages.js'
 import { useRecordingShortcut } from '~/providers/recording-shortcut'
 import { usePreferenceProvider } from '~/providers/preference'
-import { SettingsGroup, SettingsRow } from './shared'
+import { rowControlClass, SettingsGroup, SettingsRow } from './shared'
 
 type PermissionKind = 'microphone' | 'system_audio'
+
+const recordingFormatLabels: Record<RecordingFormat, () => string> = {
+	opus: m.recordingFormatOpus,
+	m4a: m.recordingFormatM4a,
+	mp3: m.recordingFormatMp3,
+	flac: m.recordingFormatFlac,
+	wav: m.recordingFormatWav,
+}
 
 const statusLabels: Record<PermissionStatus, () => string> = {
 	granted: m.permissionGranted,
@@ -149,7 +159,7 @@ function MeetPermissionRow({ enabled }: { enabled: boolean }) {
 export function RecordingSection() {
 	const shortcut = useRecordingShortcut()
 	const { meetingDetectionEnabled, setMeetingDetectionEnabled, autoTranscribeAfterRecording, setAutoTranscribeAfterRecording,
-		liveTranscription, setLiveTranscription, modelPath } = usePreferenceProvider()
+		liveTranscription, setLiveTranscription, modelPath, recordingFormat, setRecordingFormat } = usePreferenceProvider()
 	const isMacOS = platform() === 'macos'
 
 	return (
@@ -172,6 +182,20 @@ export function RecordingSection() {
 						onCheckedChange={setAutoTranscribeAfterRecording}
 						aria-label={m.autoTranscribeAfterRecording()}
 					/>
+				</SettingsRow>
+				<SettingsRow label={m.recordingFormat()} description={m.recordingFormatInfo()}>
+					<Select value={recordingFormat} onValueChange={(value: RecordingFormat) => setRecordingFormat(value)}>
+						<SelectTrigger className={`w-44 ${rowControlClass}`} aria-label={m.recordingFormat()}>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{recordingFormats.map((format) => (
+								<SelectItem key={format} value={format}>
+									{recordingFormatLabels[format]()}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
 				</SettingsRow>
 				<SettingsRow label={m.recordingShortcutEnabled()} description={m.recordingShortcutEnabledInfo()}>
 					<Switch checked={shortcut.recordingShortcutEnabled} onCheckedChange={shortcut.setRecordingShortcutEnabled} />

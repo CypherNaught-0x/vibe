@@ -142,6 +142,8 @@ export function HotkeyProvider({ children }: { children: ReactNode }) {
 				devices: [input],
 				recordingName: null,
 				noAudioStorage: preferenceRef.current.noAudioStorage,
+				// Dictation audio is transcribed and dropped, never stored: keep it lossless.
+				recordingFormat: 'wav',
 			})
 			indicatorSessionRef.current += 1
 			showIndicator('recording')

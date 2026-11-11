@@ -170,6 +170,23 @@ describe('project media ownership', () => {
 		expect(record?.sourcePath).toBe(audioPath)
 	})
 
+	it.each(['opus', 'm4a', 'mp3', 'flac'])('keeps the extension of a %s recording when moving it into its project', async (extension) => {
+		disk.files.set(`/temp/2026-08-26 10-20-30.${extension}`, new Uint8Array([1]))
+
+		const saved = await saveTranscript({
+			name: 'Record-capture',
+			sourcePath: `/temp/2026-08-26 10-20-30.${extension}`,
+			projectsPath: '/media/projects',
+			moveSourceMedia: true,
+			createdAt,
+			segments,
+		})
+
+		expect(saved?.mediaPath).toBe(`/media/projects/Record-capture-20260826-102030/audio.${extension}`)
+		const record = await readTranscript(saved!.recordPath)
+		expect(record && (await resolveProjectAudio(saved!.recordPath, record))).toBe(saved?.mediaPath)
+	})
+
 	it('copies imported media and leaves the user-owned source untouched', async () => {
 		disk.files.set('/user/interview.m4a', new Uint8Array([4, 5, 6]))
 

@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
 	transcribeJob: vi.fn(),
 	toast: vi.fn(),
 	preference: {} as Preference,
-	shortcut: { isShortcutRecording: false, setNormalRecordingActive: vi.fn() },
+	shortcut: { isShortcutRecording: false, setNormalRecordingActive: vi.fn(), setRecordingBusy: vi.fn() },
 }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen, emit: mocks.emit }))

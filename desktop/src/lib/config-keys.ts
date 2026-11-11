@@ -55,6 +55,8 @@ export const CONFIG_KEYS = {
 	meetingDetectionEnabled: 'recording.meetingDetectionEnabled',
 	autoTranscribeAfterRecording: 'recording.autoTranscribeAfterRecording',
 	liveTranscription: 'recording.liveTranscription',
+	/** Stored file type of disk recordings; absent means Opus. */
+	recordingFormat: 'recording.format',
 
 	// Reading the transcript
 	textAreaDirection: 'transcript.textDirection',

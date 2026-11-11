@@ -9,6 +9,7 @@ import { m } from '~/paraglide/messages.js'
 import * as config from '~/lib/config'
 import { pathToNamedPath } from '~/lib/fs'
 import { cleanupPartialDownloads, listInstalledModels, type InstalledModel } from '~/lib/model'
+import { KEEP_AWAKE, stopKeepAwake } from '~/lib/keep-awake'
 import { autoProjectName } from '~/lib/project-name'
 import { discardPrivateAudio, isPrivateAudioPath } from '~/lib/privacy'
 import { notifyTranscriptsChanged, saveTranscript, TRANSCRIPT_VERSION, type TranscriptRecord } from '~/lib/transcripts-store'
@@ -144,6 +145,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		return () => recordingShortcut.setNormalRecordingActive(false)
 	}, [recording.isRecording, recordingShortcut.setNormalRecordingActive])
 
+	// While a stopped recording is still being saved the global shortcut neither stops nor starts.
+	useEffect(() => {
+		recordingShortcut.setRecordingBusy(recording.isSaving)
+		return () => recordingShortcut.setRecordingBusy(false)
+	}, [recording.isSaving, recordingShortcut.setRecordingBusy])
+
 	useEffect(() => {
 		if (recordingShortcut.isShortcutRecording) setPanel('record')
 	}, [recordingShortcut.isShortcutRecording])
@@ -151,6 +158,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	const liveStartedAt = recording.isLiveRecording ? recording.live?.startedAt : null
 	const liveStoppedAt = recording.isLiveRecording ? recording.live?.stoppedAt : null
 	useEffect(() => {
+		// Saving freezes the clock at the moment of stop.
+		if (recording.isSaving) return
 		if (!recording.isRecording || (recording.isLiveRecording && !liveStartedAt)) {
 			setRecordElapsed(0)
 			return
@@ -161,15 +170,41 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		if (liveStoppedAt) return
 		const timer = window.setInterval(tick, 500)
 		return () => window.clearInterval(timer)
-	}, [recording.isRecording, recording.isLiveRecording, liveStartedAt, liveStoppedAt])
+	}, [recording.isRecording, recording.isSaving, recording.isLiveRecording, liveStartedAt, liveStoppedAt])
+
+	// Every disk/private stop (button, global shortcut, meeting prompt) is announced by the backend
+	// once accepted; the panel shows "saving" from then until record_finish/record_error is handled.
+	useEffect(() => {
+		const unlisten: Promise<UnlistenFn> = listen('record_stopping', () => {
+			if (hotkeyRecordingActive || isLiveActiveRef.current()) return
+			recording.setIsSaving(true)
+		})
+		return () => {
+			unlisten.then((fn) => fn())
+		}
+	}, [recording.setIsSaving])
 
 	// A recording becomes a durable project first. Transcription is an optional second step which
 	// updates that same project, so a failed/disabled transcription never costs the user the audio.
 	useEffect(() => {
 		const unlisten: Promise<UnlistenFn> = listen<{ path: string; name: string; warning?: string }>('record_finish', async ({ payload }) => {
 			if (hotkeyRecordingActive || isLiveActiveRef.current()) return
-			recording.setIsRecording(false)
-			setPanel('none')
+			recording.setIsSaving(true)
+			try {
+				await completeRecording(payload)
+			} catch (error) {
+				console.error('failed to complete recording:', error)
+				toast.error(m.error(), { description: String(error), position: 'bottom-center' })
+			} finally {
+				// Nothing else released the hold startRecord took once a disk recording succeeded.
+				void stopKeepAwake(KEEP_AWAKE.record)
+				recording.setIsRecording(false)
+				recording.setIsSaving(false)
+				setPanel('none')
+			}
+		})
+		/** Save the finished recording as a project, then optionally transcribe it. */
+		async function completeRecording(payload: { path: string; name: string; warning?: string }) {
 			if (payload.warning) toast.warning(m.recordingRecoveredWarning(), { description: payload.warning, position: 'bottom-center' })
 
 			const { preference: current, hydrate, transcribeJob } = recordingCompletionRef.current
@@ -212,17 +247,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 			if (saved) notifyTranscriptsChanged()
 			if (current.autoTranscribeAfterRecording && jobId) transcribeJob(jobId)
 			if (!jobId && privateAudio) await discardPrivateAudio(payload.path)
-		})
+		}
 		return () => {
 			unlisten.then((fn) => fn())
 		}
-	}, [recording.setIsRecording])
+	}, [recording.setIsRecording, recording.setIsSaving])
 
 	useEffect(() => {
 		const unlisten: Promise<UnlistenFn> = listen<string | { message?: string }>('record_error', ({ payload }) => {
 			if (hotkeyRecordingActive || isLiveActiveRef.current()) return
 			const message = typeof payload === 'string' ? payload : payload?.message || m.error()
+			void stopKeepAwake(KEEP_AWAKE.record)
 			recording.setIsRecording(false)
+			recording.setIsSaving(false)
 			setPanel('none')
 			toast.error(m.error(), { description: message, position: 'bottom-center' })
 			setErrorModal?.({ log: message, open: true })
@@ -230,7 +267,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 		return () => {
 			unlisten.then((fn) => fn())
 		}
-	}, [recording.setIsRecording, setErrorModal])
+	}, [recording.setIsRecording, recording.setIsSaving, setErrorModal])
 
 	const browse = useCallback(async () => {
 		/**

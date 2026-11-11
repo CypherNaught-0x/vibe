@@ -228,21 +228,27 @@ function RecordPanel() {
 		preference.setHomeTab('record')
 	}, [])
 
-	if (recording.isRecording) {
+	// Saving outlives isRecording: it holds from the stop request until the project is written.
+	if (recording.isRecording || recording.isSaving) {
+		const saving = recording.isSaving
 		const live = recording.isLiveRecording ? recording.live : null
 		const preparing = live?.phase === 'loading' || live?.phase === 'calibrating'
 		return (
 			<div className={cn('flex flex-col items-center gap-4 py-2.5', live && 'min-h-0 flex-1')}>
 				{!preparing && (
 					<div className="flex items-center gap-3">
-						{(!live || live.phase === 'ready') && <LevelMeter />}
-						<span className="font-mono text-2xl tracking-tight tabular-nums">{formatElapsed(recordElapsed)}</span>
+						{!saving && (!live || live.phase === 'ready') && <LevelMeter />}
+						<span className={cn('font-mono text-2xl tracking-tight tabular-nums', saving && 'text-muted-foreground')}>{formatElapsed(recordElapsed)}</span>
 					</div>
 				)}
 				{live && <LiveDetails live={live} saveTranscripts={preference.saveTranscripts} />}
-				<Button onClick={() => recording.stopRecord()} disabled={live?.phase === 'finishing'} className="h-10 w-full rounded-xl">
-					<Square className="h-3.5 w-3.5 fill-current" />
-					{preparing ? m.cancel() : m.stopRecording()}
+				<Button
+					onClick={() => recording.stopRecord()}
+					disabled={saving || live?.phase === 'finishing'}
+					aria-busy={saving}
+					className="h-10 w-full rounded-xl">
+					{saving ? <Spinner className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5 fill-current" />}
+					{saving ? m.savingRecording() : preparing ? m.cancel() : m.stopRecording()}
 				</Button>
 			</div>
 		)

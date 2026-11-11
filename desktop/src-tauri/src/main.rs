@@ -17,6 +17,7 @@ mod live_capture;
 mod logging;
 mod meeting_prompt;
 mod private_audio;
+mod recording_encoder;
 mod server;
 mod setup;
 mod transcript;
