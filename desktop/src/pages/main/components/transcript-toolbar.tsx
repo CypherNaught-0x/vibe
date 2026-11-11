@@ -274,7 +274,8 @@ export default function TranscriptToolbar({
 
 	return (
 		<>
-			<div className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-1 border-b border-border bg-background/85 px-4 backdrop-blur-md">
+			{/* Its empty space moves the window too, like the titlebar strip above (buttons stay clickable). */}
+			<div data-tauri-drag-region className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-1 border-b border-border bg-background/85 px-4 backdrop-blur-md">
 				<AnimatePresence initial={false} mode="wait">
 					{searching ? (
 						<motion.div
@@ -305,6 +306,7 @@ export default function TranscriptToolbar({
 					) : (
 						<motion.div
 							key="actions"
+							data-tauri-drag-region
 							initial={{ opacity: 0, y: -4 }}
 							animate={{ opacity: 1, y: 0 }}
 							exit={{ opacity: 0, y: -4 }}
