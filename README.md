@@ -25,6 +25,18 @@
 
 <hr />
 
+## About this fork
+
+This is a fork of [thewh1teagle/vibe](https://github.com/thewh1teagle/vibe), kept rebased on the latest upstream `main`. It adds:
+
+- 🔴 **Live transcription (Audio8)**: captions appear while you speak. Microphone audio streams at 16 kHz to a local Audio8 server, which shows draft and final captions as they settle. Backends: Torch, ONNX and MLX. MLX loads weights as 8-bit, which on an M3 Pro is fast enough for real time. Audio8 only supports English and Chinese.
+- 🧠 **RAM-only recording ("Do not store audio")**: recordings stay in memory and never touch disk. They are transcribed from RAM and discarded afterwards. URL downloads are disabled in this mode.
+- 🗑️ **Delete the original transcript after AI processing**: keep only the AI summary. New recordings, live or file-based, are summarized automatically when this option and the summary task are both on.
+- 🦙 **Nemotron 3.5 Transcribe 30B-A4B**: NVIDIA's speech-LLM via [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp). It works with any decoder quantization, covers 40 languages plus auto-detect, and keeps audio in memory. The runtime and encoder are downloaded on first use and checked by SHA-256.
+- 🛠️ **Fixes**: stopping a recording twice (button, hotkey or shortcut) no longer crashes the app. On macOS, you can move the window by dragging the top bar, including the empty parts of the transcript toolbar.
+
+Builds for this fork are not published. To build it yourself, see [docs/BUILDING.md](docs/BUILDING.md).
+
 ## Screenshots
 
 <p align="center">
