@@ -1,6 +1,6 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { ChevronDown, Download, NotebookPen, Pencil, PilcrowLeft, PilcrowRight, Plus, Search, Settings2, Sparkles, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { ChevronDown, Download, FileText, NotebookPen, Pencil, PilcrowLeft, PilcrowRight, Plus, Search, Settings2, Sparkles, X } from 'lucide-react'
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { m } from '~/paraglide/messages.js'
 import { usePreferenceProvider } from '~/providers/preference'
 import { Button } from '~/components/ui/button'
@@ -10,6 +10,8 @@ import { Spinner } from '~/components/ui/spinner'
 import { Switch } from '~/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
 import { cn } from '~/lib/style'
+import { useAppShortcutEvent } from '~/lib/app-shortcuts'
+import ShortcutHint from '~/components/shortcut-hint'
 import type { TextFormat } from '~/components/format-select'
 import type { Job } from '../hooks/use-transcribe-queue'
 import type { TranscriptTab, TranscriptTextSize, TranscriptViewOptions } from '../hooks/use-transcript-view'
@@ -99,11 +101,71 @@ function ViewOptions({ options }: { options: TranscriptViewOptions }) {
 	)
 }
 
+const VIEWS = [
+	{ value: 'transcript', label: () => m.segmentsTab(), Icon: FileText },
+	{ value: 'summary', label: () => m.summaryTab(), Icon: Sparkles },
+] as const
+
 /**
- * Everything the AI step can do for the open transcript, behind one icon — same popover grammar as
- * the view options, so the toolbar keeps its shape whether or not a summary exists.
+ * Transcript ⇄ Summary, always in view while there is a summary to read (or one arriving). A
+ * tablist: arrow keys move between the two, and ⌘⇧S / Ctrl+Shift+S flips it from anywhere.
  */
-function SummaryMenu({ job, tab, setTab }: { job: Job | null; tab: TranscriptTab; setTab: (tab: TranscriptTab) => void }) {
+function ViewSwitch({ tab, setTab }: { tab: TranscriptTab; setTab: (tab: TranscriptTab) => void }) {
+	const refs = useRef<Partial<Record<TranscriptTab, HTMLButtonElement | null>>>({})
+
+	function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+		// Two tabs: every arrow lands on the other one, whichever way the text runs.
+		if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+		event.preventDefault()
+		const next: TranscriptTab =
+			event.key === 'Home' ? 'transcript' : event.key === 'End' ? 'summary' : tab === 'summary' ? 'transcript' : 'summary'
+		setTab(next)
+		refs.current[next]?.focus()
+	}
+
+	return (
+		<div
+			role="tablist"
+			aria-label={m.viewSwitch()}
+			onKeyDown={onKeyDown}
+			className="me-1 inline-flex shrink-0 items-center gap-0.5 rounded-full border border-border bg-muted/50 p-0.5">
+			{VIEWS.map(({ value, label, Icon }) => {
+				const selected = tab === value
+				return (
+					<Tooltip key={value}>
+						<TooltipTrigger asChild>
+							<button
+								ref={(element) => {
+									refs.current[value] = element
+								}}
+								type="button"
+								role="tab"
+								aria-selected={selected}
+								tabIndex={selected ? 0 : -1}
+								onClick={() => setTab(value)}
+								className={cn(
+									'flex h-7 cursor-pointer items-center gap-1.5 rounded-full px-3 text-[13px] font-medium transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+									selected ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+								)}>
+								<Icon className="h-3.5 w-3.5" />
+								{label()}
+							</button>
+						</TooltipTrigger>
+						<TooltipContent>
+							<ShortcutHint label={label()} shortcut="toggleSummary" />
+						</TooltipContent>
+					</Tooltip>
+				)
+			})}
+		</div>
+	)
+}
+
+/**
+ * What the AI step can do for the open transcript — summarize, improve, customize — behind one
+ * button. Switching between transcript and summary is not in here: that is the toolbar's ViewSwitch.
+ */
+function SummaryMenu({ job }: { job: Job | null }) {
 	const { summaries } = useSession()
 	const [open, setOpen] = useState(false)
 	const [promptOpen, setPromptOpen] = useState(false)
@@ -113,19 +175,16 @@ function SummaryMenu({ job, tab, setTab }: { job: Job | null; tab: TranscriptTab
 	const hasSummary = Boolean(job?.summary)
 	const hasText = (job?.segments.length ?? 0) > 0
 	const canSummarize = summaries.enabled && hasText && job?.status !== 'running'
-	const actionLabel =
-		!canSummarize && hasSummary
-			? m.summaryTab()
-			: summarizing
-				? m.summarizeLoading()
-				: summaryError
-					? m.retrySummary()
-					: hasSummary
-						? m.regenerateSummary()
-						: m.summarizeTranscript()
+	const actionLabel = summarizing
+		? m.summarizeLoading()
+		: summaryError
+			? m.retrySummary()
+			: hasSummary
+				? m.regenerateSummary()
+				: m.summarizeTranscript()
 
-	// Nothing to offer: the feature is off in settings and this transcript has no summary either.
-	if (!canSummarize && !hasSummary) return null
+	// Nothing to offer: summaries are off in settings, or there is no text to summarize yet.
+	if (!canSummarize && !summarizing) return null
 
 	function run(prompt?: string) {
 		setOpen(false)
@@ -150,24 +209,7 @@ function SummaryMenu({ job, tab, setTab }: { job: Job | null; tab: TranscriptTab
 					<p className="mb-2 text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase">{m.aiSection()}</p>
 
 					<div className="space-y-3">
-						{hasSummary && (
-							<div className="inline-flex w-full items-center gap-1 rounded-full border border-border bg-muted/50 p-1">
-								{(['transcript', 'summary'] as const).map((value) => (
-									<button
-										key={value}
-										type="button"
-										onClick={() => setTab(value)}
-										className={cn(
-											'flex-1 cursor-pointer rounded-full py-1 text-[12px] font-medium transition-colors duration-150',
-											tab === value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
-										)}>
-										{value === 'transcript' ? m.segmentsTab() : m.summaryTab()}
-									</button>
-								))}
-							</div>
-						)}
-
-						<div className={cn('space-y-0.5', hasSummary && 'border-t border-border pt-2')}>
+						<div className="space-y-0.5">
 							{canSummarize && (
 								<button
 									type="button"
@@ -217,7 +259,7 @@ export default function TranscriptToolbar({
 	tab: TranscriptTab
 	setTab: (tab: TranscriptTab) => void
 }) {
-	const { queue, startNew } = useSession()
+	const { queue, startNew, summaries } = useSession()
 	const preference = usePreferenceProvider()
 	const [exportOpen, setExportOpen] = useState(false)
 	const autoExport = preference.autoExport
@@ -271,6 +313,23 @@ export default function TranscriptToolbar({
 
 	const hasText = (job?.segments.length ?? 0) > 0
 	const hasExportContent = hasText || Boolean(job?.summary)
+	// Two readings only when both exist: a summary (or one streaming in) next to a transcript that
+	// was kept. A transcript without a summary offers "Summarize" instead, not an empty tab.
+	const summarizing = job ? Boolean(summaries.pending[job.id]) : false
+	const showViewSwitch = hasText && (Boolean(job?.summary) || summarizing)
+
+	useAppShortcutEvent('find', () => {
+		if (!hasText) return
+		if (!searching) return setSearching(true)
+		searchRef.current?.focus()
+		searchRef.current?.select()
+	})
+	useAppShortcutEvent('export', () => {
+		if (hasExportContent && !exportOpen) openExport()
+	})
+	useAppShortcutEvent('toggleSummary', () => {
+		if (showViewSwitch) setTab(tab === 'summary' ? 'transcript' : 'summary')
+	})
 
 	return (
 		<>
@@ -312,6 +371,8 @@ export default function TranscriptToolbar({
 							exit={{ opacity: 0, y: -4 }}
 							transition={{ duration: 0.15, ease: 'easeOut' }}
 							className="flex w-full items-center gap-1">
+							{showViewSwitch && <ViewSwitch tab={tab} setTab={setTab} />}
+
 							{queue.jobs.length > 1 ? (
 								/* A batch: the same word, with everything that writes files behind it. */
 								<DropdownMenu>
@@ -343,27 +404,42 @@ export default function TranscriptToolbar({
 									</DropdownMenuContent>
 								</DropdownMenu>
 							) : (
-								<Button
-									variant="ghost"
-									size="sm"
-									onClick={openExport}
-									disabled={!hasExportContent}
-									className="rounded-full px-3 text-[13px] font-medium">
-									<Download className="h-3.5 w-3.5" />
-									{m.exportDialogTitle()}
-								</Button>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={openExport}
+											disabled={!hasExportContent}
+											className="rounded-full px-3 text-[13px] font-medium">
+											<Download className="h-3.5 w-3.5" />
+											{m.exportDialogTitle()}
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>
+										<ShortcutHint label={m.exportDialogTitle()} shortcut="export" />
+									</TooltipContent>
+								</Tooltip>
 							)}
 
-							<Button
-								variant="ghost"
-								size="sm"
-								onClick={() => setSearching(true)}
-								disabled={!hasText}
-								className="rounded-full px-3 text-[13px] font-medium">
-								<Search className="h-3.5 w-3.5" />
-							</Button>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										variant="ghost"
+										size="sm"
+										onClick={() => setSearching(true)}
+										disabled={!hasText}
+										aria-label={m.searchTranscript()}
+										className="rounded-full px-3 text-[13px] font-medium">
+										<Search className="h-3.5 w-3.5" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>
+									<ShortcutHint label={m.searchTranscript()} shortcut="find" />
+								</TooltipContent>
+							</Tooltip>
 
-							<SummaryMenu job={job} tab={tab} setTab={setTab} />
+							<SummaryMenu job={job} />
 
 							<ViewOptions options={options} />
 
@@ -378,10 +454,17 @@ export default function TranscriptToolbar({
 										{queue.isAborting ? m.aborting() : m.cancel()}
 									</Button>
 								)}
-								<Button variant="ghost" size="sm" onClick={startNew} className="rounded-full px-3 text-[13px] font-medium">
-									<Plus className="h-3.5 w-3.5" />
-									{m.newSession()}
-								</Button>
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button variant="ghost" size="sm" onClick={startNew} className="rounded-full px-3 text-[13px] font-medium">
+											<Plus className="h-3.5 w-3.5" />
+											{m.newSession()}
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent>
+										<ShortcutHint label={m.newTranscription()} shortcut="newTranscript" />
+									</TooltipContent>
+								</Tooltip>
 							</div>
 						</motion.div>
 					)}

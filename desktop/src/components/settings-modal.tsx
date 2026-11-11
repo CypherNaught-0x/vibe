@@ -26,7 +26,7 @@ export default function SettingsModal({ visible, setVisible, scrollTo }: Setting
 	if (!visible) return null
 
 	return (
-		<div className="fixed inset-0 z-50 overflow-hidden bg-black/45 backdrop-blur-md" onMouseDown={() => setVisible(false)}>
+		<div role="dialog" aria-modal="true" className="fixed inset-0 z-50 overflow-hidden bg-black/45 backdrop-blur-md" onMouseDown={() => setVisible(false)}>
 			<div className="h-full overflow-y-auto overscroll-contain" onMouseDown={() => setVisible(false)}>
 				<SettingsPage setVisible={setVisible} scrollTo={scrollTo} />
 			</div>

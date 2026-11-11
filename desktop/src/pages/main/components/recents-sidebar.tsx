@@ -8,6 +8,7 @@ import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'r
 import { m } from '~/paraglide/messages.js'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '~/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '~/components/ui/tooltip'
+import ShortcutHint from '~/components/shortcut-hint'
 import { cn } from '~/lib/style'
 import {
 	deleteTranscript,
@@ -427,13 +428,20 @@ export default function RecentsSidebar() {
 				<span className="select-none text-[17px] font-semibold tracking-[-0.03em] text-foreground">{m.appTitle()}</span>
 			</div>
 			<div className="px-2">
-				<button
-					type="button"
-					onClick={startNew}
-					className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-medium text-foreground transition-colors duration-150 hover:bg-muted/60">
-					<Plus className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} />
-					{m.newTranscription()}
-				</button>
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							type="button"
+							onClick={startNew}
+							className="flex w-full cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-[13px] font-medium text-foreground transition-colors duration-150 hover:bg-muted/60">
+							<Plus className="h-4 w-4 text-muted-foreground" strokeWidth={1.75} />
+							{m.newTranscription()}
+						</button>
+					</TooltipTrigger>
+					<TooltipContent side="right">
+						<ShortcutHint label={m.newTranscription()} shortcut="newTranscript" />
+					</TooltipContent>
+				</Tooltip>
 			</div>
 
 			{entries.length > 8 && (

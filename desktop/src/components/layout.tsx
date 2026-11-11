@@ -11,6 +11,7 @@ import { UpdaterContext } from '~/providers/updater'
 import SettingsModal from './settings-modal'
 import PageTransition from './page-transition'
 import ModelDownloadPrompt from './model-download-prompt'
+import ShortcutHint from './shortcut-hint'
 
 /**
  * The topbar lives here but the Recents sidebar belongs to the main page, so the toggle travels as
@@ -76,7 +77,7 @@ export function SidebarToggleButton() {
 					)}
 				</Button>
 			</TooltipTrigger>
-			<TooltipContent>{hint ? m.updateAvailableOpenRecents() : m.toggleRecents()}</TooltipContent>
+			<TooltipContent>{hint ? m.updateAvailableOpenRecents() : <ShortcutHint label={m.toggleRecents()} shortcut="toggleSidebar" />}</TooltipContent>
 		</Tooltip>
 	)
 }

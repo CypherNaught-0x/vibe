@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useRef, useState } from 'react'
 import { m } from '~/paraglide/messages.js'
 import Layout, { SIDEBAR_STORAGE_KEY, TOGGLE_SIDEBAR_EVENT } from '~/components/layout'
+import { useAppShortcuts } from '~/lib/app-shortcuts'
 import IdleHero from './components/idle-hero'
 import PlayerBar from './components/player-bar'
 import RecentsSidebar from './components/recents-sidebar'
@@ -114,8 +115,22 @@ function PlayerSlot() {
 	return <PlayerBar key={selected.id} job={selected} />
 }
 
+/**
+ * The main page's keyboard shortcuts (see `APP_SHORTCUTS`). Page-wide actions run here; search,
+ * export and the transcript/summary switch are forwarded to the toolbar that owns their state.
+ */
+function usePageShortcuts() {
+	const { startNew } = useSession()
+	useAppShortcuts({
+		newTranscript: startNew,
+		settings: () => window.dispatchEvent(new CustomEvent('vibe:open-settings')),
+		toggleSidebar: () => window.dispatchEvent(new CustomEvent(TOGGLE_SIDEBAR_EVENT)),
+	})
+}
+
 function Shell() {
 	const showSidebar = useShowSidebar()
+	usePageShortcuts()
 
 	return (
 		<Layout
