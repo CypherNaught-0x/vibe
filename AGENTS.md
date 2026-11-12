@@ -5,6 +5,10 @@
 - Tasks: `chore` — see `chore list`
 - JS: `pnpm` only; Python: `uv` standalone scripts (`uv run`)
 
+## README
+
+When a user-facing feature lands, add or update its bullet under "About vibe++" in `README.md`, in the same commit.
+
 ## Validation
 
 Plan validation scripts: `plans/<name>/<name>_001.py` (+ `.md`), standalone `uv` scripts.

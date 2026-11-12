@@ -2,13 +2,13 @@
   <a target="blank" href="https://github.com/thewh1teagle/vibe">
     <img
         width="96px"
-        alt="Vibe logo"
+        alt="vibe++ logo"
         src="./design/logo.png"
     />
   </a>
 </p>
 
-<h1 align="center">Vibe - Transcribe on your own!</h1>
+<h1 align="center">vibe++ - Transcribe on your own!</h1>
 
 <p align="center">
   <strong>⌨️ Transcribe audio and video right on your device</strong>
@@ -17,7 +17,7 @@
 
 <p align="center">
   <a target="_blank" href="https://thewh1teagle.github.io/vibe/">
-    🔗 Download Vibe
+    🔗 Download upstream Vibe
   </a>
     &nbsp; | &nbsp; Give it a Star ⭐ | &nbsp;
     <a target="_blank" href="https://thewh1teagle.github.io/vibe/?action=support-vibe">Support the project 🤝</a>
@@ -25,9 +25,9 @@
 
 <hr />
 
-## About this fork
+## About vibe++
 
-This is a fork of [thewh1teagle/vibe](https://github.com/thewh1teagle/vibe), kept rebased on the latest upstream `main`. It adds:
+vibe++ is a fork of [thewh1teagle/vibe](https://github.com/thewh1teagle/vibe), kept rebased on the latest upstream `main`. It adds:
 
 - 🔴 **Live transcription (Audio8)**: captions appear while you speak. Microphone audio streams at 16 kHz to a local Audio8 server, which shows draft and final captions as they settle. Backends: Torch, ONNX and MLX. MLX loads weights as 8-bit, which on an M3 Pro is fast enough for real time. Audio8 only supports English and Chinese.
 - 🧠 **RAM-only recording ("Do not store audio")**: recordings stay in memory and never touch disk. They are transcribed from RAM and discarded afterwards. URL downloads are disabled in this mode.
@@ -35,7 +35,7 @@ This is a fork of [thewh1teagle/vibe](https://github.com/thewh1teagle/vibe), kep
 - 🦙 **Nemotron 3.5 Transcribe 30B-A4B**: NVIDIA's speech-LLM via [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp). It works with any decoder quantization, covers 40 languages plus auto-detect, and keeps audio in memory. The runtime and encoder are downloaded on first use and checked by SHA-256.
 - 🛠️ **Fixes**: stopping a recording twice (button, hotkey or shortcut) no longer crashes the app. On macOS, you can move the window by dragging the top bar, including the empty parts of the transcript toolbar.
 
-Builds for this fork are not published. To build it yourself, see [docs/BUILDING.md](docs/BUILDING.md).
+Builds of vibe++ are not published. To build it yourself, see [docs/BUILDING.md](docs/BUILDING.md).
 
 ## Screenshots
 
