@@ -34,6 +34,7 @@ vibe++ is a fork of [thewh1teagle/vibe](https://github.com/thewh1teagle/vibe), k
 - 🗑️ **Delete the original transcript after AI processing**: keep only the AI summary. New recordings, live or file-based, are summarized automatically when this option and the summary task are both on.
 - 🦙 **Nemotron 3.5 Transcribe 30B-A4B**: NVIDIA's speech-LLM via [NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp). It works with any decoder quantization, covers 40 languages plus auto-detect, and keeps audio in memory. The runtime and encoder are downloaded on first use and checked by SHA-256.
 - 📁 **Folders for transcripts**: group projects into named folders in the sidebar and move them between folders. Pick a folder with its **+** button and new transcriptions, recordings and live captions are saved there until you clear it. Folders are ordinary subfolders of the projects folder, so they also show up in your file manager.
+- 🤏 **Compact toolbar**: when the window gets narrow, the transcript toolbar shows icons only. Only the active transcript/summary view keeps its label.
 - 🛠️ **Fixes**: stopping a recording twice (button, hotkey or shortcut) no longer crashes the app. On macOS, you can move the window by dragging the top bar, including the empty parts of the transcript toolbar.
 
 Builds of vibe++ are not published. To build it yourself, see [docs/BUILDING.md](docs/BUILDING.md).

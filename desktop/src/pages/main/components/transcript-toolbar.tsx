@@ -19,12 +19,18 @@ import { useTranscriptExport } from '../hooks/use-transcript-export'
 import TranscriptExportDialog from './transcript-export-dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '~/components/ui/dropdown-menu'
 import { useSession } from '../session'
+import { useCompactToolbar } from '../hooks/use-compact-toolbar'
 
 const TEXT_SIZES: { value: TranscriptTextSize; label: () => string }[] = [
 	{ value: 'sm', label: () => m.textSizeSmall() },
 	{ value: 'md', label: () => m.textSizeMedium() },
 	{ value: 'lg', label: () => m.textSizeLarge() },
 ]
+
+/** Toolbar buttons never wrap or shrink; compact ones (icon only) trade padding for room. */
+function buttonClass(compact: boolean, extra?: string) {
+	return cn('shrink-0 rounded-full text-[13px] font-medium whitespace-nowrap', compact ? 'px-2.5' : 'px-3', extra)
+}
 
 /** Reading controls for the transcript: type scale, timestamps, speaker labels. */
 function ViewOptions({ options }: { options: TranscriptViewOptions }) {
@@ -36,7 +42,7 @@ function ViewOptions({ options }: { options: TranscriptViewOptions }) {
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<PopoverTrigger asChild>
-						<Button variant="ghost" size="sm" className="rounded-full px-3 text-[13px] font-medium" aria-label={m.viewOptions()}>
+						<Button variant="ghost" size="sm" className={buttonClass(true)} aria-label={m.viewOptions()}>
 							<Settings2 className="h-3.5 w-3.5" />
 						</Button>
 					</PopoverTrigger>
@@ -110,7 +116,7 @@ const VIEWS = [
  * Transcript ⇄ Summary, always in view while there is a summary to read (or one arriving). A
  * tablist: arrow keys move between the two, and ⌘⇧S / Ctrl+Shift+S flips it from anywhere.
  */
-function ViewSwitch({ tab, setTab }: { tab: TranscriptTab; setTab: (tab: TranscriptTab) => void }) {
+function ViewSwitch({ tab, setTab, compact }: { tab: TranscriptTab; setTab: (tab: TranscriptTab) => void; compact: boolean }) {
 	const refs = useRef<Partial<Record<TranscriptTab, HTMLButtonElement | null>>>({})
 
 	function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -141,14 +147,17 @@ function ViewSwitch({ tab, setTab }: { tab: TranscriptTab; setTab: (tab: Transcr
 								type="button"
 								role="tab"
 								aria-selected={selected}
+								aria-label={compact && !selected ? label() : undefined}
 								tabIndex={selected ? 0 : -1}
 								onClick={() => setTab(value)}
 								className={cn(
-									'flex h-7 cursor-pointer items-center gap-1.5 rounded-full px-3 text-[13px] font-medium transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+									'flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full text-[13px] font-medium whitespace-nowrap transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
 									selected ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+									// Compact: only the open reading keeps its word.
+									compact && !selected ? 'px-2' : 'px-3',
 								)}>
 								<Icon className="h-3.5 w-3.5" />
-								{label()}
+								{(!compact || selected) && label()}
 							</button>
 						</TooltipTrigger>
 						<TooltipContent>
@@ -165,7 +174,7 @@ function ViewSwitch({ tab, setTab }: { tab: TranscriptTab; setTab: (tab: Transcr
  * What the AI step can do for the open transcript — summarize, improve, customize — behind one
  * button. Switching between transcript and summary is not in here: that is the toolbar's ViewSwitch.
  */
-function SummaryMenu({ job }: { job: Job | null }) {
+function SummaryMenu({ job, compact }: { job: Job | null; compact: boolean }) {
 	const { summaries } = useSession()
 	const [open, setOpen] = useState(false)
 	const [promptOpen, setPromptOpen] = useState(false)
@@ -197,9 +206,9 @@ function SummaryMenu({ job }: { job: Job | null }) {
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<PopoverTrigger asChild>
-							<Button variant="ghost" size="sm" className="rounded-full px-3 text-[13px] font-medium" aria-label={actionLabel}>
+							<Button variant="ghost" size="sm" className={buttonClass(compact)} aria-label={actionLabel}>
 								{summarizing ? <Spinner className="h-3.5 w-3.5" /> : <NotebookPen className="h-3.5 w-3.5" />}
-								{actionLabel}
+								{!compact && actionLabel}
 							</Button>
 						</PopoverTrigger>
 					</TooltipTrigger>
@@ -269,6 +278,8 @@ export default function TranscriptToolbar({
 	// A one-off override: the dialog opens on the transcript's own direction every time.
 	const [exportDirection, setExportDirection] = useState(preference.textAreaDirection)
 	const [searching, setSearching] = useState(false)
+	// Narrow row (small window, wide sidebar): buttons drop their words and keep their icons.
+	const { ref: actionsRef, compact } = useCompactToolbar<HTMLDivElement>()
 	const searchRef = useRef<HTMLInputElement>(null)
 	const exporter = useTranscriptExport({
 		enabled: exportOpen,
@@ -317,6 +328,7 @@ export default function TranscriptToolbar({
 	// was kept. A transcript without a summary offers "Summarize" instead, not an empty tab.
 	const summarizing = job ? Boolean(summaries.pending[job.id]) : false
 	const showViewSwitch = hasText && (Boolean(job?.summary) || summarizing)
+	const cancelLabel = queue.isAborting ? m.aborting() : m.cancel()
 
 	useAppShortcutEvent('find', () => {
 		if (!hasText) return
@@ -334,7 +346,7 @@ export default function TranscriptToolbar({
 	return (
 		<>
 			{/* Its empty space moves the window too, like the titlebar strip above (buttons stay clickable). */}
-			<div data-tauri-drag-region className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-1 border-b border-border bg-background/85 px-4 backdrop-blur-md">
+			<div data-tauri-drag-region className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-1 overflow-hidden border-b border-border bg-background/85 px-4 backdrop-blur-md">
 				<AnimatePresence initial={false} mode="wait">
 					{searching ? (
 						<motion.div
@@ -365,24 +377,30 @@ export default function TranscriptToolbar({
 					) : (
 						<motion.div
 							key="actions"
+							ref={actionsRef}
 							data-tauri-drag-region
 							initial={{ opacity: 0, y: -4 }}
 							animate={{ opacity: 1, y: 0 }}
 							exit={{ opacity: 0, y: -4 }}
 							transition={{ duration: 0.15, ease: 'easeOut' }}
-							className="flex w-full items-center gap-1">
-							{showViewSwitch && <ViewSwitch tab={tab} setTab={setTab} />}
+							className="flex w-full min-w-0 items-center gap-1">
+							{showViewSwitch && <ViewSwitch tab={tab} setTab={setTab} compact={compact} />}
 
 							{queue.jobs.length > 1 ? (
 								/* A batch: the same word, with everything that writes files behind it. */
 								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<Button variant="ghost" size="sm" className="rounded-full px-3 text-[13px] font-medium">
-											<Download className="h-3.5 w-3.5" />
-											{m.exportDialogTitle()}
-											<ChevronDown className="h-3 w-3 opacity-70" />
-										</Button>
-									</DropdownMenuTrigger>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<DropdownMenuTrigger asChild>
+												<Button variant="ghost" size="sm" className={buttonClass(compact)} aria-label={compact ? m.exportDialogTitle() : undefined}>
+													<Download className="h-3.5 w-3.5" />
+													{!compact && m.exportDialogTitle()}
+													<ChevronDown className="h-3 w-3 opacity-70" />
+												</Button>
+											</DropdownMenuTrigger>
+										</TooltipTrigger>
+										<TooltipContent>{m.exportDialogTitle()}</TooltipContent>
+									</Tooltip>
 									<DropdownMenuContent align="start" className="w-60">
 										<DropdownMenuItem onClick={openExport} disabled={!hasExportContent}>
 											{m.exportThisTranscript()}
@@ -411,9 +429,10 @@ export default function TranscriptToolbar({
 											size="sm"
 											onClick={openExport}
 											disabled={!hasExportContent}
-											className="rounded-full px-3 text-[13px] font-medium">
+											aria-label={compact ? m.exportDialogTitle() : undefined}
+											className={buttonClass(compact)}>
 											<Download className="h-3.5 w-3.5" />
-											{m.exportDialogTitle()}
+											{!compact && m.exportDialogTitle()}
 										</Button>
 									</TooltipTrigger>
 									<TooltipContent>
@@ -430,7 +449,7 @@ export default function TranscriptToolbar({
 										onClick={() => setSearching(true)}
 										disabled={!hasText}
 										aria-label={m.searchTranscript()}
-										className="rounded-full px-3 text-[13px] font-medium">
+										className={buttonClass(true)}>
 										<Search className="h-3.5 w-3.5" />
 									</Button>
 								</TooltipTrigger>
@@ -439,26 +458,39 @@ export default function TranscriptToolbar({
 								</TooltipContent>
 							</Tooltip>
 
-							<SummaryMenu job={job} />
+							<SummaryMenu job={job} compact={compact} />
 
 							<ViewOptions options={options} />
 
-							<div className="ms-auto flex items-center gap-1">
+							<div className="ms-auto flex shrink-0 items-center gap-1">
 								{queue.running && (
-									<Button
-										variant="ghost"
-										size="sm"
-										onClick={queue.cancelAll}
-										disabled={queue.isAborting}
-										className={cn('rounded-full px-3 text-[13px] font-medium text-muted-foreground hover:text-destructive')}>
-										{queue.isAborting ? m.aborting() : m.cancel()}
-									</Button>
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<Button
+												variant="ghost"
+												size="sm"
+												onClick={queue.cancelAll}
+												disabled={queue.isAborting}
+												aria-label={compact ? cancelLabel : undefined}
+												className={buttonClass(compact, 'text-muted-foreground hover:text-destructive')}>
+												{/* The word is the button at full width; compact needs a glyph. */}
+												{compact && (queue.isAborting ? <Spinner className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />)}
+												{!compact && cancelLabel}
+											</Button>
+										</TooltipTrigger>
+										{compact && <TooltipContent>{cancelLabel}</TooltipContent>}
+									</Tooltip>
 								)}
 								<Tooltip>
 									<TooltipTrigger asChild>
-										<Button variant="ghost" size="sm" onClick={startNew} className="rounded-full px-3 text-[13px] font-medium">
+										<Button
+											variant="ghost"
+											size="sm"
+											onClick={startNew}
+											aria-label={compact ? m.newSession() : undefined}
+											className={buttonClass(compact)}>
 											<Plus className="h-3.5 w-3.5" />
-											{m.newSession()}
+											{!compact && m.newSession()}
 										</Button>
 									</TooltipTrigger>
 									<TooltipContent>
