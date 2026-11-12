@@ -34,6 +34,7 @@ export function useLiveRecordingProject(queue: TranscribeQueue, onShown: () => v
 					sourcePath: '',
 					noAudioStorage: true,
 					projectsPath: current.projectsPath,
+					folder: current.transcriptFolder,
 					segments: record.segments,
 					language: record.language,
 					modelPath: record.modelPath,

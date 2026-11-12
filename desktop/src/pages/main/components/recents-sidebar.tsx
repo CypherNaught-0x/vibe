@@ -12,7 +12,7 @@ import ShortcutHint from '~/components/shortcut-hint'
 import { cn } from '~/lib/style'
 import {
 	deleteTranscript,
-	listTranscripts,
+	listTranscriptsAndFolders,
 	readTranscript,
 	renameTranscript,
 	resolveProjectAudio,
@@ -28,6 +28,8 @@ import { Spinner } from '~/components/ui/spinner'
 import { useSession } from '../session'
 import RetranscribeDialog from './retranscribe-dialog'
 import type { Job } from '../hooks/use-transcribe-queue'
+import { useRecentsFolders } from '../hooks/use-recents-folders'
+import { FolderNameInput, FolderRow, MoveToSubmenu, NewFolderButton, TargetFolderChip } from './recents-folders'
 
 /** Resize bounds: never narrower than the rows need, never much wider than the default. */
 const DEFAULT_WIDTH = 288
@@ -41,6 +43,8 @@ const MAX_WIDTH = 380
 const CLOSE_EDGE = 56
 /** A recent row is two lines of text plus its padding; the virtualizer measures the real height after mount. */
 const ROW_HEIGHT = 52
+/** A folder heading is one line of text. */
+const FOLDER_ROW_HEIGHT = 36
 const WIDTH_STORAGE_KEY = 'vibe_sidebar_width'
 
 function clampWidth(width: number) {
@@ -152,22 +156,30 @@ function RecentRow({
 	entry,
 	active,
 	disabled,
+	folders,
 	onOpen,
 	onDeleted,
 	onRenamed,
+	onMove,
+	onNewFolder,
 }: {
 	entry: TranscriptEntry
 	active: boolean
 	disabled: boolean
+	folders: string[]
 	onOpen: () => void
 	onDeleted: () => void
-	onRenamed: () => void
+	onRenamed: (renamed: TranscriptEntry) => void
+	onMove: (folder: string | null) => void
+	onNewFolder: () => void
 }) {
 	const { queue } = useSession()
 	const [menu, setMenu] = useState<RowMenuState>({ sourcePath: null, sourceExists: false })
 	const [renaming, setRenaming] = useState(false)
 	const [retranscribing, setRetranscribing] = useState(false)
 	const [draftName, setDraftName] = useState(entry.name)
+	// The new-folder editor takes focus while the menu closes; handing it back to "…" would blur it.
+	const keepFocusAway = useRef(false)
 
 	// The list is built from names only, so the media is located lazily — the first time the row's
 	// menu opens — to decide whether "Re-transcribe" can do anything. The original file wins; the
@@ -212,14 +224,15 @@ function RecentRow({
 
 	function retranscribe() {
 		if (!menu.sourcePath || !menu.sourceExists) return
-		queue.enqueue([{ name: entry.name, path: menu.sourcePath, projectName: entry.name }])
+		queue.enqueue([{ name: entry.name, path: menu.sourcePath, projectName: entry.name, folder: entry.folder ?? null }])
 	}
 
 	async function commitRename() {
 		const next = draftName.trim()
 		setRenaming(false)
 		if (!next || next === entry.name) return
-		if (await renameTranscript(entry.path, next)) onRenamed()
+		const renamed = await renameTranscript(entry.path, next)
+		if (renamed) onRenamed(renamed)
 	}
 
 	if (renaming) {
@@ -269,7 +282,14 @@ function RecentRow({
 						<MoreHorizontal className="h-4 w-4" />
 					</button>
 				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end" className="w-48">
+				<DropdownMenuContent
+					align="end"
+					className="w-48"
+					onCloseAutoFocus={(event) => {
+						if (!keepFocusAway.current) return
+						keepFocusAway.current = false
+						event.preventDefault()
+					}}>
 					<DropdownMenuItem disabled={disabled || !menu.sourceExists} onSelect={() => setRetranscribing(true)}>
 						{m.reTranscribe()}
 					</DropdownMenuItem>
@@ -280,6 +300,13 @@ function RecentRow({
 						}}>
 						{m.rename()}
 					</DropdownMenuItem>
+					{/* Moving mid-run could pull a project out from under a pending write. */}
+					<MoveToSubmenu current={entry.folder} folders={folders} disabled={disabled} onMove={onMove}
+						onNewFolder={() => {
+							keepFocusAway.current = true
+							onNewFolder()
+						}}
+					/>
 					<DropdownMenuItem onSelect={() => void reveal()}>{m.showInFolder()}</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={() => void remove()}>
@@ -319,58 +346,123 @@ function SessionRow({ job, active, onOpen }: { job: Job; active: boolean; onOpen
 	)
 }
 
+/** One line of the windowed list: a folder heading, a transcript (top level or inside an open folder), or the name editor of a folder being created. */
+export type RecentsItem =
+	| { kind: 'folder'; folder: string; count: number; open: boolean }
+	| { kind: 'entry'; entry: TranscriptEntry; nested: boolean }
+	| { kind: 'new-folder' }
+
+function itemKey(item: RecentsItem | undefined, index: number) {
+	if (!item) return index
+	if (item.kind === 'folder') return `folder:${item.folder}`
+	if (item.kind === 'entry') return item.entry.path
+	return 'new-folder'
+}
+
 /**
  * The recents list, windowed: only the rows near the viewport are mounted, so a folder holding
  * hundreds of projects costs the same to render as one holding ten.
  */
 function RecentsList({
-	entries,
+	items,
+	folders,
+	targetFolder,
+	projectsPath,
 	activePath,
 	activeName,
 	disabled,
 	onOpen,
 	onChanged,
+	onRenamed,
+	onMove,
+	onCreateFolder,
+	onCancelNewFolder,
+	onStartNewFolder,
+	onToggleFolder,
+	onNewInFolder,
+	onRenameFolder,
+	onDeleteFolder,
 }: {
-	entries: TranscriptEntry[]
+	items: RecentsItem[]
+	folders: string[]
+	targetFolder: string | null
+	projectsPath: string | null
 	activePath: string | null
 	activeName: string | null
 	disabled: boolean
 	onOpen: (entry: TranscriptEntry) => void
 	onChanged: () => void
+	onRenamed: (entry: TranscriptEntry, renamed: TranscriptEntry) => void
+	onMove: (entry: TranscriptEntry, folder: string | null) => void
+	onCreateFolder: (name: string) => void
+	onCancelNewFolder: () => void
+	onStartNewFolder: (moving: TranscriptEntry) => void
+	onToggleFolder: (folder: string) => void
+	onNewInFolder: (folder: string) => void
+	onRenameFolder: (folder: string, name: string) => void
+	onDeleteFolder: (folder: string) => void
 }) {
 	const scrollRef = useRef<HTMLDivElement>(null)
 	const virtualizer = useVirtualizer({
-		count: entries.length,
+		count: items.length,
 		getScrollElement: () => scrollRef.current,
-		estimateSize: () => ROW_HEIGHT,
-		getItemKey: (index) => entries[index]?.path ?? index,
+		estimateSize: (index) => (items[index]?.kind === 'entry' ? ROW_HEIGHT : FOLDER_ROW_HEIGHT),
+		getItemKey: (index) => itemKey(items[index], index),
 		// A row grows when its name wraps, and shrinks while it is being renamed.
 		measureElement: (element) => element.getBoundingClientRect().height,
 		overscan: 8,
 	})
 
+	function renderItem(item: RecentsItem) {
+		if (item.kind === 'new-folder') return <FolderNameInput onCommit={onCreateFolder} onCancel={onCancelNewFolder} />
+		if (item.kind === 'folder') {
+			return (
+				<FolderRow
+					folder={item.folder}
+					count={item.count}
+					open={item.open}
+					target={item.folder === targetFolder}
+					projectsPath={projectsPath}
+					onToggle={() => onToggleFolder(item.folder)}
+					onNewHere={() => onNewInFolder(item.folder)}
+					onRename={(name) => onRenameFolder(item.folder, name)}
+					onDelete={() => onDeleteFolder(item.folder)}
+				/>
+			)
+		}
+		const { entry, nested } = item
+		const active = entry.path === activePath
+		return (
+			<div className={cn(nested && 'ps-5')}>
+				<RecentRow
+					entry={active && activeName ? { ...entry, name: activeName } : entry}
+					active={active}
+					disabled={disabled}
+					folders={folders}
+					onOpen={() => onOpen(entry)}
+					onDeleted={onChanged}
+					onRenamed={(renamed) => onRenamed(entry, renamed)}
+					onMove={(folder) => onMove(entry, folder)}
+					onNewFolder={() => onStartNewFolder(entry)}
+				/>
+			</div>
+		)
+	}
+
 	return (
 		<div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
 			<div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-				{virtualizer.getVirtualItems().map((item) => {
-					const entry = entries[item.index]
-					if (!entry) return null
-					const active = entry.path === activePath
+				{virtualizer.getVirtualItems().map((virtual) => {
+					const item = items[virtual.index]
+					if (!item) return null
 					return (
 						<div
-							key={item.key}
+							key={virtual.key}
 							ref={virtualizer.measureElement}
-							data-index={item.index}
+							data-index={virtual.index}
 							className="absolute inset-x-0 top-0"
-							style={{ transform: `translateY(${item.start}px)` }}>
-							<RecentRow
-								entry={active && activeName ? { ...entry, name: activeName } : entry}
-								active={active}
-								disabled={disabled}
-								onOpen={() => onOpen(entry)}
-								onDeleted={onChanged}
-								onRenamed={onChanged}
-							/>
+							style={{ transform: `translateY(${virtual.start}px)` }}>
+							{renderItem(item)}
 						</div>
 					)
 				})}
@@ -384,11 +476,16 @@ export default function RecentsSidebar() {
 	const { updateApp, availableUpdate } = useContext(UpdaterContext)
 	const { width, dragging, handleProps } = useResizableWidth()
 	const [entries, setEntries] = useState<TranscriptEntry[]>([])
+	const [folders, setFolders] = useState<string[]>([])
 	const [query, setQuery] = useState('')
 
 	const refresh = useCallback(() => {
-		void listTranscripts(preference.projectsPath).then(setEntries)
+		void listTranscriptsAndFolders(preference.projectsPath).then((listing) => {
+			setEntries(listing.entries)
+			setFolders(listing.folders)
+		})
 	}, [preference.projectsPath])
+	const folderActions = useRecentsFolders(entries, folders, query, refresh)
 
 	useEffect(() => {
 		refresh()
@@ -401,13 +498,14 @@ export default function RecentsSidebar() {
 	// finished with saving switched off) — without them a new transcription looks like it went nowhere.
 	const liveJobs = useMemo(() => queue.jobs.filter((job) => !job.savedPath && !job.hydrated), [queue.jobs])
 
-	const filtered = useMemo(() => {
-		const needle = query.trim().toLowerCase()
-		if (!needle) return entries
-		return entries.filter((entry) => entry.name.toLowerCase().includes(needle))
-	}, [entries, query])
-
 	const activePath = queue.selectedJob?.savedPath ?? null
+
+	function renamed(entry: TranscriptEntry, next: TranscriptEntry) {
+		const job = queue.jobs.find((candidate) => candidate.savedPath === entry.path)
+		queue.relocateSaved(entry.path, next.path, next.mediaPath)
+		if (job) queue.previewJobName(job.id, next.name)
+		refresh()
+	}
 
 	async function open(entry: TranscriptEntry) {
 		const record = await readTranscript(entry.path)
@@ -443,6 +541,7 @@ export default function RecentsSidebar() {
 					</TooltipContent>
 				</Tooltip>
 			</div>
+			{folderActions.targetFolder && <TargetFolderChip folder={folderActions.targetFolder} onClear={folderActions.clearTarget} />}
 
 			{entries.length > 8 && (
 				<div className="relative mt-2 px-3">
@@ -471,21 +570,38 @@ export default function RecentsSidebar() {
 				</>
 			)}
 
-			<p className="px-4 pt-4 pb-2 text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase">{m.recents()}</p>
+			<div className="flex items-center justify-between ps-4 pe-3 pt-4 pb-2">
+				<p className="text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase">{m.recents()}</p>
+				<NewFolderButton onClick={() => folderActions.startCreating()} />
+			</div>
 
-			{filtered.length === 0 ? (
+			{folderActions.items.length === 0 ? (
 				<div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-					<p className="px-3 py-2 text-[13px] text-muted-foreground">{entries.length === 0 ? m.noRecentTranscripts() : m.noMatches()}</p>
+					<p className="px-3 py-2 text-[13px] text-muted-foreground">
+						{entries.length === 0 && folders.length === 0 ? m.noRecentTranscripts() : m.noMatches()}
+					</p>
 				</div>
 			) : (
 				<RecentsList
-					entries={filtered}
+					items={folderActions.items}
+					folders={folders}
+					targetFolder={folderActions.targetFolder}
+					projectsPath={preference.projectsPath}
 					activePath={activePath}
 					activeName={queue.selectedJob?.name ?? null}
 					// Loading another transcript mid-run would fight the queue for the view.
 					disabled={queue.running}
 					onOpen={(entry) => void open(entry)}
 					onChanged={refresh}
+					onRenamed={renamed}
+					onMove={folderActions.move}
+					onCreateFolder={folderActions.create}
+					onCancelNewFolder={folderActions.cancelCreating}
+					onStartNewFolder={folderActions.startCreating}
+					onToggleFolder={folderActions.toggle}
+					onNewInFolder={folderActions.newIn}
+					onRenameFolder={folderActions.rename}
+					onDeleteFolder={folderActions.remove}
 				/>
 			)}
 

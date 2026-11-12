@@ -40,6 +40,8 @@ export const CONFIG_KEYS = {
 	focusOnFinish: 'transcription.focusOnFinish',
 	saveTranscripts: 'transcription.saveTranscripts',
 	projectsPath: 'transcription.projectsPath',
+	/** User folder (inside the projects folder) new transcriptions are filed into; null = top level. */
+	transcriptFolder: 'transcription.transcriptFolder',
 	/** Export every finished transcript automatically: formats, destination, replace rule. */
 	autoExport: 'transcription.autoExport',
 

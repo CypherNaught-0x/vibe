@@ -80,6 +80,7 @@ export default function HandoffTranscriptSaver() {
 				name,
 				sourcePath,
 				projectsPath: preferenceRef.current.projectsPath,
+				folder: preferenceRef.current.transcriptFolder,
 				moveSourceMedia: true,
 				noAudioStorage: preferenceRef.current.noAudioStorage,
 				segments,

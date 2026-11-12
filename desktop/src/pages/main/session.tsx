@@ -218,6 +218,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 							name,
 							sourcePath: payload.path,
 							projectsPath: current.projectsPath,
+							folder: current.transcriptFolder,
 							moveSourceMedia: true,
 							noAudioStorage: current.noAudioStorage,
 							segments: [],

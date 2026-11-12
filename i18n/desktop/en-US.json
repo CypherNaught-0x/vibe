@@ -733,5 +733,19 @@
 	"phoneRevokeDeviceNamed": "Revoke {name}",
 	"whatsNew": "What's new",
 	"betaUpdates": "Beta updates",
-	"betaUpdatesInfo": "Get new versions a few days early, before everyone else."
+	"betaUpdatesInfo": "Get new versions a few days early, before everyone else.",
+	"newFolder": "New folder",
+	"newFolderEllipsis": "New folder…",
+	"folderName": "Folder name",
+	"folderActions": "Folder actions",
+	"moveTo": "Move to",
+	"noFolder": "No folder",
+	"newTranscriptionHere": "New transcription here",
+	"deleteFolder": "Delete folder",
+	"deleteFolderBody": "Delete the folder “{name}”? Its transcripts move back to Recents.",
+	"folderKept": "The folder still holds other files, so it was kept.",
+	"folderCreateFailed": "Couldn't create a folder with that name.",
+	"emptyFolder": "Empty",
+	"savingToFolder": "Saving to {name}",
+	"stopSavingToFolder": "Save new transcriptions outside folders"
 }

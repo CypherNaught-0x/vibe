@@ -54,6 +54,7 @@ export function useProjectPersistence(
 				name: job.name,
 				sourcePath: job.path,
 				projectsPath: current.projectsPath,
+				folder: job.folder,
 				moveSourceMedia: job.source === 'record' || job.source === 'url',
 				noAudioStorage: current.noAudioStorage,
 				segments,

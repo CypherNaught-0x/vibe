@@ -70,6 +70,8 @@ export interface TranscriptEntry {
 	createdAt: Date
 	/** Updated stable media path when returned by renameTranscript. */
 	mediaPath?: string
+	/** Name of the user folder (a subfolder of the store) holding it; undefined at the top level. */
+	folder?: string
 }
 
 export interface SaveTranscriptInput {
@@ -77,6 +79,8 @@ export interface SaveTranscriptInput {
 	sourcePath: string
 	/** Custom root for project folders; null/undefined uses Documents/Vibe. */
 	projectsPath?: string | null
+	/** User folder inside the root to save into (created on demand); null/undefined saves at the top level. */
+	folder?: string | null
 	/** Vibe-created media is removed only after its project copy and metadata are durable. */
 	moveSourceMedia?: boolean
 	/** Never make a media copy, including for imported sources. */
@@ -104,7 +108,7 @@ function stamp(date: Date) {
 	)
 }
 
-const stampPattern = /-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/
+export const stampPattern = /-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/
 
 function parseStamp(stem: string): { name: string; createdAt: Date } {
 	const match = stem.match(stampPattern)
@@ -131,7 +135,7 @@ function toFileStem(name: string) {
 }
 
 /** Last path segment, for both posix and windows separators. */
-function basename(path: string) {
+export function basename(path: string) {
 	return path.split(/[/\\]/).pop() ?? path
 }
 
@@ -151,7 +155,7 @@ function extensionOf(path: string) {
 }
 
 /** A project save is a `transcript.vibe.json` inside its own folder; anything else is legacy flat. */
-function isProjectRecordPath(path: string) {
+export function isProjectRecordPath(path: string) {
 	return basename(path) === TRANSCRIPT_FILENAME
 }
 
@@ -186,7 +190,7 @@ function serialize(record: TranscriptRecord) {
 let temporaryFileCounter = 0
 
 /** Publish a complete JSON record without exposing a partially written target. */
-async function writeRecordAtomic(target: string, record: TranscriptRecord, requireBackupCleanup = false) {
+export async function writeRecordAtomic(target: string, record: TranscriptRecord, requireBackupCleanup = false) {
 	temporaryFileCounter += 1
 	const temporary = `${target}.tmp-${Date.now()}-${temporaryFileCounter}`
 	const backup = `${target}.bak-${Date.now()}-${temporaryFileCounter}`
@@ -286,7 +290,10 @@ export async function saveTranscript(input: SaveTranscriptInput): Promise<SaveTr
 	let projectFolder: string | null = null
 	try {
 		const createdAt = input.createdAt ?? new Date()
-		const folder = await transcriptsFolder(input.projectsPath)
+		const root = await transcriptsFolder(input.projectsPath)
+		const userFolder = input.folder ? toFolderName(input.folder) : ''
+		const folder = userFolder ? await pathApi.join(root, userFolder) : root
+		if (userFolder && !(await fs.exists(folder))) await fs.mkdir(folder, { recursive: true })
 		projectFolder = await reserveProjectFolder(folder, input.name, createdAt)
 		const target = await pathApi.join(projectFolder, TRANSCRIPT_FILENAME)
 		const skipAudio = input.noAudioStorage || isPrivateAudioPath(input.sourcePath)
@@ -334,33 +341,85 @@ export async function saveTranscript(input: SaveTranscriptInput): Promise<SaveTr
 }
 
 /**
- * Every saved transcript, newest first: project folders plus legacy flat files. Reads folder and
- * file *names* only — never the records themselves.
+ * A user folder name, made safe for the file system. Unlike project names nothing that looks like an
+ * extension is stripped, so "Q3.planning" stays intact. Empty when nothing usable remains.
  */
-export async function listTranscripts(projectsPath?: string | null): Promise<TranscriptEntry[]> {
-	try {
-		const folder = projectsPath || (await pathApi.join(await pathApi.documentDir(), TRANSCRIPTS_FOLDER))
-		if (!(await fs.exists(folder))) return []
-		const entries = await fs.readDir(folder)
-		const found: TranscriptEntry[] = []
-		for (const entry of entries) {
-			if (entry.isDirectory) {
-				const record = await pathApi.join(folder, entry.name, TRANSCRIPT_FILENAME)
-				if (!(await fs.exists(record))) continue
+export function toFolderName(name: string) {
+	return name
+		.replace(/[/\\?%*:|"<>]/g, '-')
+		// eslint-disable-next-line no-control-regex
+		.replace(/[\u0000-\u001f]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.replace(/^\.+/, '')
+		.slice(0, 120)
+}
+
+/**
+ * A directory in the store root that is a user folder rather than a project: it holds no record,
+ * is not hidden, and does not carry a project timestamp (a project whose record went missing).
+ */
+export function isUserFolderName(name: string) {
+	return !name.startsWith('.') && !stampPattern.test(name)
+}
+
+/** Projects and legacy flat files directly inside one directory. */
+async function scanLevel(folder: string, userFolder: string | undefined, found: TranscriptEntry[], subfolders?: string[]) {
+	for (const entry of await fs.readDir(folder)) {
+		if (entry.isDirectory) {
+			const record = await pathApi.join(folder, entry.name, TRANSCRIPT_FILENAME)
+			if (await fs.exists(record)) {
 				const { name, createdAt } = parseStamp(entry.name)
-				found.push({ path: record, name, createdAt })
-				continue
+				found.push({ path: record, name, createdAt, folder: userFolder })
+			} else if (subfolders && isUserFolderName(entry.name)) {
+				subfolders.push(entry.name)
 			}
-			if (!entry.name.endsWith(TRANSCRIPT_EXTENSION)) continue
-			const stem = entry.name.slice(0, -TRANSCRIPT_EXTENSION.length)
-			const { name, createdAt } = parseStamp(stem)
-			found.push({ path: await pathApi.join(folder, entry.name), name, createdAt })
+			continue
 		}
-		return found.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.path.localeCompare(a.path))
+		if (!entry.name.endsWith(TRANSCRIPT_EXTENSION)) continue
+		const stem = entry.name.slice(0, -TRANSCRIPT_EXTENSION.length)
+		const { name, createdAt } = parseStamp(stem)
+		found.push({ path: await pathApi.join(folder, entry.name), name, createdAt, folder: userFolder })
+	}
+}
+
+export interface TranscriptListing {
+	entries: TranscriptEntry[]
+	/** Every user folder in the root, empty ones included, sorted by name. */
+	folders: string[]
+}
+
+/**
+ * Every saved transcript, newest first: project folders plus legacy flat files, at the top level and
+ * one level down inside user folders. Reads folder and file *names* only — never the records.
+ */
+export async function listTranscriptsAndFolders(projectsPath?: string | null): Promise<TranscriptListing> {
+	try {
+		const root = projectsPath || (await pathApi.join(await pathApi.documentDir(), TRANSCRIPTS_FOLDER))
+		if (!(await fs.exists(root))) return { entries: [], folders: [] }
+		const found: TranscriptEntry[] = []
+		const folders: string[] = []
+		await scanLevel(root, undefined, found, folders)
+		for (const folder of folders) {
+			try {
+				await scanLevel(await pathApi.join(root, folder), folder, found)
+			} catch (error) {
+				console.warn('failed to list transcript folder:', folder, error)
+			}
+		}
+		return {
+			entries: found.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.path.localeCompare(a.path)),
+			folders: folders.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' })),
+		}
 	} catch (error) {
 		console.warn('failed to list transcripts:', error)
-		return []
+		return { entries: [], folders: [] }
 	}
+}
+
+/** Every saved transcript, newest first, wherever it is filed. */
+export async function listTranscripts(projectsPath?: string | null): Promise<TranscriptEntry[]> {
+	return (await listTranscriptsAndFolders(projectsPath)).entries
 }
 
 /** Read and validate one transcript. Corrupt or foreign files resolve to null. */
@@ -413,7 +472,8 @@ export async function resolveProjectAudio(jsonPath: string, record: TranscriptRe
 	}
 }
 
-const serializeMetadata = createSerialExecutor()
+/** One queue per record path, shared by every metadata write, rename, move and delete. */
+export const serializeMetadata = createSerialExecutor()
 
 /** Failed earlier edits can leave raw JSON backups. Redaction must remove those too. */
 async function removePreviousMetadataArtifacts(target: string) {

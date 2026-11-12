@@ -32,8 +32,8 @@ function record(name: string, texts: string[], audioFile?: string) {
 }
 
 /** A project folder: the record plus the copy of the media it was transcribed from. */
-function seedProject(name: string, stamp: string, texts: string[]) {
-	const folder = `${DOCUMENTS_FOLDER}/Vibe/${name}-${stamp}`
+function seedProject(name: string, stamp: string, texts: string[], userFolder?: string) {
+	const folder = `${DOCUMENTS_FOLDER}/Vibe/${userFolder ? `${userFolder}/` : ''}${name}-${stamp}`
 	virtualFs.set(`${folder}/transcript.vibe.json`, record(name, texts, 'audio.mp3'))
 	virtualFs.set(`${folder}/audio.mp3`, null)
 }
@@ -48,6 +48,9 @@ seedProject('podcast-episode', '20260818-174200', [
 	'On-device transcription keeps your audio private.',
 	'Thanks for listening, see you next week.',
 ])
+
+// A user folder (see src/lib/transcript-folders.ts) holding one project.
+seedProject('client-kickoff', '20260815-140000', ['Goals for the first quarter.', 'Next meeting in two weeks.'], 'Clients')
 
 // One save in the pre-project-folder layout, so the mock keeps exercising back-compat.
 virtualFs.set(

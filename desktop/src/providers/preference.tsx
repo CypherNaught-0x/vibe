@@ -81,6 +81,9 @@ export interface Preference {
 	setTheme: ModifyState<'light' | 'dark'>
 	projectsPath: string | null
 	setProjectsPath: ModifyState<string | null>
+	/** User folder new transcriptions are saved into; null saves at the top level. */
+	transcriptFolder: string | null
+	setTranscriptFolder: ModifyState<string | null>
 	setLanguageDirections: () => void
 	homeTab: HomeTab
 	setHomeTab: ModifyState<HomeTab>
@@ -237,6 +240,7 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 	const [modelOptions, setModelOptions] = usePersisted<ModelOptions>(CONFIG_KEYS.modelOptions, defaultOptions.modelOptions)
 	const [ffmpegOptions, setFfmpegOptions] = usePersisted<FfmpegOptions>(CONFIG_KEYS.ffmpegOptions, defaultOptions.ffmpegOptions)
 	const [projectsPath, setProjectsPath] = usePersisted<string | null>(CONFIG_KEYS.projectsPath, null)
+	const [transcriptFolder, setTranscriptFolder] = usePersisted<string | null>(CONFIG_KEYS.transcriptFolder, null)
 	const [autoExport, setAutoExport] = usePersisted<AutoExportSettings>(CONFIG_KEYS.autoExport, DEFAULT_AUTO_EXPORT)
 	// The pre-3.2 `summarize.llm` object is read once when `ai` is missing, so nobody loses a key or a prompt.
 	const [ai, setAi] = usePersisted<AiSettings>(
@@ -423,6 +427,8 @@ export function PreferenceProvider({ children }: { children: ReactNode }) {
 		setModelOptions,
 		projectsPath,
 		setProjectsPath,
+		transcriptFolder,
+		setTranscriptFolder,
 		textFormatTranscript,
 		setTextFormatTranscript,
 		textFormatSummary,

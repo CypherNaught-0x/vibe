@@ -31,6 +31,8 @@ export type JobStatus = 'queued' | 'running' | 'done' | 'error' | 'cancelled'
 export interface EnqueueItem extends NamedPath {
 	/** Title of the project this input came from; used verbatim, without a source prefix. */
 	projectName?: string
+	/** User folder to save into; undefined uses the folder selected for new transcriptions. */
+	folder?: string | null
 }
 
 export interface Job {
@@ -41,6 +43,8 @@ export interface Job {
 	privateAudioPath?: string
 	/** Raw text was intentionally deleted; do not automatically retranscribe retained audio. */
 	transcriptDeleted?: boolean
+	/** User folder this new project is saved into, fixed when it was queued. */
+	folder?: string | null
 	/** Origin of this newly created project. */
 	source?: ProjectSource
 	status: JobStatus
@@ -118,6 +122,8 @@ export interface TranscribeQueue {
 	setSpeakerName: (jobId: string, speaker: number, name: string) => void
 	/** Attribute one line to a speaker: a line diarization missed, or one it got wrong. */
 	setSegmentSpeaker: (jobId: string, segmentIndex: number, speaker: number) => void
+	/** A saved project moved on disk (sidebar move/rename): point jobs holding it at the new place. */
+	relocateSaved: (fromPath: string, toPath: string, mediaPath?: string) => void
 	cancelCurrent: () => void
 	cancelAll: () => void
 	reset: () => void
@@ -558,6 +564,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 				path: isPrivateAudioPath(file.path) ? '' : file.path,
 				privateAudioPath: isPrivateAudioPath(file.path) ? file.path : undefined,
 				source: file.source ?? 'file',
+				folder: file.folder !== undefined ? file.folder : preferenceRef.current.transcriptFolder,
 				status: 'queued',
 				progress: 0,
 				segments: [],
@@ -602,6 +609,18 @@ export function useTranscribeQueue(): TranscribeQueue {
 			return id
 		},
 		[commit, discardPendingAudio, select],
+	)
+
+	const relocateSaved = useCallback(
+		(fromPath: string, toPath: string, mediaPath?: string) => {
+			if (!jobsRef.current.some((job) => job.savedPath === fromPath)) return
+			commit(
+				jobsRef.current.map((job) =>
+					job.savedPath === fromPath ? { ...job, savedPath: toPath, ...(mediaPath && job.path ? { path: mediaPath } : {}) } : job,
+				),
+			)
+		},
+		[commit],
 	)
 
 	const cancelCurrent = useCallback(() => {
@@ -658,6 +677,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 		enqueue,
 		transcribeJob,
 		hydrate,
+		relocateSaved,
 		updateSegmentText,
 		renameJob,
 		previewJobName,

@@ -18,7 +18,20 @@ function toPosixPath(value: unknown): string {
 	return path.startsWith('/') ? path : `${APP_LOCAL_DATA}/${path}`.replace(/\/+/g, '/')
 }
 
+/** Directories made by mkdir; others exist implicitly while they hold a file. */
+const virtualDirs = new Set<string>()
+
+/** Move or drop every explicit directory at or below `from`. */
+function moveDirs(from: string, to: string | null) {
+	for (const dir of Array.from(virtualDirs)) {
+		if (dir !== from && !dir.startsWith(`${from}/`)) continue
+		virtualDirs.delete(dir)
+		if (to !== null) virtualDirs.add(`${to}${dir.slice(from.length)}`)
+	}
+}
+
 function isDirPath(path: string): boolean {
+	if (virtualDirs.has(path)) return true
 	const prefix = `${path}/`
 	for (const key of virtualFs.keys()) {
 		if (key.startsWith(prefix)) {
@@ -189,6 +202,9 @@ const fsHandlers: CommandHandlerMap = {
 				names.set(rest.slice(0, slash), true)
 			}
 		}
+		for (const sub of virtualDirs) {
+			if (sub.startsWith(prefix) && !sub.slice(prefix.length).includes('/')) names.set(sub.slice(prefix.length), true)
+		}
 		return Array.from(names, ([name, isDirectory]) => ({
 			name,
 			isDirectory,
@@ -196,7 +212,10 @@ const fsHandlers: CommandHandlerMap = {
 			isSymlink: false,
 		}))
 	},
-	'plugin:fs|mkdir': () => null,
+	'plugin:fs|mkdir': (args) => {
+		virtualDirs.add(toPosixPath(args.path).replace(/\/$/, ''))
+		return null
+	},
 	'plugin:fs|copy_file': (args) => {
 		const from = toPosixPath(args.fromPath ?? args.from)
 		const to = toPosixPath(args.toPath ?? args.to)
@@ -212,6 +231,7 @@ const fsHandlers: CommandHandlerMap = {
 			virtualFs.delete(from)
 			return null
 		}
+		moveDirs(from, to)
 		const prefix = `${from}/`
 		for (const key of Array.from(virtualFs.keys())) {
 			if (key.startsWith(prefix)) {
@@ -224,6 +244,7 @@ const fsHandlers: CommandHandlerMap = {
 	'plugin:fs|remove': (args) => {
 		const path = toPosixPath(args.path)
 		virtualFs.delete(path)
+		moveDirs(path, null)
 		const prefix = `${path}/`
 		for (const key of Array.from(virtualFs.keys())) {
 			if (key.startsWith(prefix)) {
