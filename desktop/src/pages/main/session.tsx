@@ -368,8 +368,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 	const hasLiveText = !!recording.live?.segments.length || !!recording.live?.partial
 	useConfirmExit(preference.closeToTray, queue.running || hasUnsavedResults || recording.isLiveRecording || (hasLiveError && hasLiveText))
 
+	// Nothing selected is the start screen, even while a run goes on in the background.
 	const mode: SessionMode =
-		recording.isLiveRecording || queue.jobs.length === 0 ? 'idle' : queue.running || queue.jobs.some((job) => job.status === 'queued') ? 'working' : 'done'
+		recording.isLiveRecording || !queue.selectedJob ? 'idle' : queue.running || queue.jobs.some((job) => job.status === 'queued') ? 'working' : 'done'
 
 	const value = useMemo<Session>(
 		() => ({

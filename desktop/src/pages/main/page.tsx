@@ -8,6 +8,7 @@ import PlayerBar from './components/player-bar'
 import RecentsSidebar from './components/recents-sidebar'
 import SessionView from './components/session-view'
 import { SessionProvider, useSession } from './session'
+import { runJobs } from './hooks/viewed-jobs'
 
 /** Collapsed = hidden entirely; the state lives in localStorage so it survives a reload. */
 function useSidebarVisible() {
@@ -90,7 +91,7 @@ function MainContent() {
 function useShowSidebar() {
 	const sidebarVisible = useSidebarVisible()
 	const { queue } = useSession()
-	const batch = queue.jobs.length > 1
+	const batch = runJobs(queue.jobs).length > 1
 	const wasBatch = useRef(batch)
 	const visibleRef = useRef(sidebarVisible)
 	visibleRef.current = sidebarVisible

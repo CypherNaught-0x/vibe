@@ -4,6 +4,7 @@ import { m } from '~/paraglide/messages.js'
 import { Spinner } from '~/components/ui/spinner'
 import { cn } from '~/lib/style'
 import type { Job } from '../hooks/use-transcribe-queue'
+import { runJobs } from '../hooks/viewed-jobs'
 import { useSession } from '../session'
 
 function StatusIcon({ job }: { job: Job }) {
@@ -56,7 +57,7 @@ export default function FileQueue() {
 		<div className="flex h-full min-h-0 flex-col">
 			<div className="flex items-center justify-between px-4 pt-4 pb-3">
 				<p className="text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase">
-					{m.files()} · {queue.batch ? m.batchProgress({ done: String(queue.batch.done), total: String(queue.batch.total) }) : queue.jobs.length}
+					{m.files()} · {queue.batch ? m.batchProgress({ done: String(queue.batch.done), total: String(queue.batch.total) }) : runJobs(queue.jobs).length}
 				</p>
 				{queue.running && (
 					<button
@@ -70,7 +71,7 @@ export default function FileQueue() {
 			</div>
 
 			<div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-				{queue.jobs.map((job) => {
+				{runJobs(queue.jobs).map((job) => {
 					const selected = job.id === queue.selectedId
 					return (
 						<button

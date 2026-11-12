@@ -24,9 +24,9 @@ import { openSettingsSection } from '~/lib/app'
 import { TOGGLE_SIDEBAR_EVENT } from '~/components/layout'
 import { getTextDirection } from '~/paraglide/runtime.js'
 import { UpdaterContext } from '~/providers/updater'
-import { Spinner } from '~/components/ui/spinner'
 import { useSession } from '../session'
 import RetranscribeDialog from './retranscribe-dialog'
+import { isTranscribing, RowProgress } from './transcribe-progress'
 import type { Job } from '../hooks/use-transcribe-queue'
 import { useRecentsFolders } from '../hooks/use-recents-folders'
 import { FolderNameInput, FolderRow, MoveToSubmenu, NewFolderButton, TargetFolderChip } from './recents-folders'
@@ -155,7 +155,7 @@ interface RowMenuState {
 function RecentRow({
 	entry,
 	active,
-	disabled,
+	job,
 	folders,
 	onOpen,
 	onDeleted,
@@ -165,7 +165,8 @@ function RecentRow({
 }: {
 	entry: TranscriptEntry
 	active: boolean
-	disabled: boolean
+	/** The session job transcribing this project right now, if any. */
+	job: Job | undefined
 	folders: string[]
 	onOpen: () => void
 	onDeleted: () => void
@@ -260,11 +261,10 @@ function RecentRow({
 			<button
 				type="button"
 				onClick={onOpen}
-				disabled={disabled}
 				title={entry.name}
-				className="min-w-0 flex-1 cursor-pointer px-3 py-2 text-start disabled:cursor-default disabled:opacity-50">
+				className="min-w-0 flex-1 cursor-pointer px-3 py-2 text-start">
 				<p className="truncate text-[13px] font-medium text-foreground">{entry.name}</p>
-				<p className="mt-0.5 truncate text-[11px] text-muted-foreground">{relativeDate(entry.createdAt)}</p>
+				{job ? <RowProgress job={job} /> : <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{relativeDate(entry.createdAt)}</p>}
 			</button>
 
 			<DropdownMenu
@@ -290,7 +290,7 @@ function RecentRow({
 						keepFocusAway.current = false
 						event.preventDefault()
 					}}>
-					<DropdownMenuItem disabled={disabled || !menu.sourceExists} onSelect={() => setRetranscribing(true)}>
+					<DropdownMenuItem disabled={!!job || !menu.sourceExists} onSelect={() => setRetranscribing(true)}>
 						{m.reTranscribe()}
 					</DropdownMenuItem>
 					<DropdownMenuItem
@@ -300,8 +300,8 @@ function RecentRow({
 						}}>
 						{m.rename()}
 					</DropdownMenuItem>
-					{/* Moving mid-run could pull a project out from under a pending write. */}
-					<MoveToSubmenu current={entry.folder} folders={folders} disabled={disabled} onMove={onMove}
+					{/* Moving a project mid-transcription would pull it out from under the write of its result. */}
+					<MoveToSubmenu current={entry.folder} folders={folders} disabled={!!job} onMove={onMove}
 						onNewFolder={() => {
 							keepFocusAway.current = true
 							onNewFolder()
@@ -320,27 +320,13 @@ function RecentRow({
 
 /** One job from the running session — it shows up the moment it is queued, not when it is saved. */
 function SessionRow({ job, active, onOpen }: { job: Job; active: boolean; onOpen: () => void }) {
-	const status =
-		job.status === 'running'
-			? `${m.transcribing()} ${Math.round(job.progress)}%`
-			: job.status === 'queued'
-				? m.queued()
-				: job.status === 'error'
-					? m.error()
-					: job.status === 'cancelled'
-						? m.cancel()
-						: ''
+	const status = job.status === 'error' ? m.error() : job.status === 'cancelled' ? m.cancel() : ''
 
 	return (
 		<div className={cn('group relative flex items-center rounded-xl transition-colors duration-150', active ? 'bg-muted' : 'hover:bg-muted/60')}>
 			<button type="button" onClick={onOpen} title={job.name} className="min-w-0 flex-1 cursor-pointer px-3 py-2 text-start">
 				<p className="truncate text-[13px] font-medium text-foreground">{job.name}</p>
-				{status && (
-					<p className="mt-0.5 flex items-center gap-1.5 truncate text-[11px] text-muted-foreground">
-						{job.status === 'running' && <Spinner className="h-3 w-3" />}
-						{status}
-					</p>
-				)}
+				{isTranscribing(job) ? <RowProgress job={job} /> : status && <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{status}</p>}
 			</button>
 		</div>
 	)
@@ -370,7 +356,7 @@ function RecentsList({
 	projectsPath,
 	activePath,
 	activeName,
-	disabled,
+	transcribing,
 	onOpen,
 	onChanged,
 	onRenamed,
@@ -389,7 +375,8 @@ function RecentsList({
 	projectsPath: string | null
 	activePath: string | null
 	activeName: string | null
-	disabled: boolean
+	/** Session jobs transcribing a saved project, by the project's record path. */
+	transcribing: Map<string, Job>
 	onOpen: (entry: TranscriptEntry) => void
 	onChanged: () => void
 	onRenamed: (entry: TranscriptEntry, renamed: TranscriptEntry) => void
@@ -437,7 +424,7 @@ function RecentsList({
 				<RecentRow
 					entry={active && activeName ? { ...entry, name: activeName } : entry}
 					active={active}
-					disabled={disabled}
+					job={transcribing.get(entry.path)}
 					folders={folders}
 					onOpen={() => onOpen(entry)}
 					onDeleted={onChanged}
@@ -499,6 +486,11 @@ export default function RecentsSidebar() {
 	const liveJobs = useMemo(() => queue.jobs.filter((job) => !job.savedPath && !job.hydrated), [queue.jobs])
 
 	const activePath = queue.selectedJob?.savedPath ?? null
+	// Saved projects being transcribed (a recording, say) show their progress in their own row.
+	const transcribing = useMemo(
+		() => new Map(queue.jobs.filter((job) => job.savedPath && isTranscribing(job)).map((job) => [job.savedPath!, job])),
+		[queue.jobs],
+	)
 
 	function renamed(entry: TranscriptEntry, next: TranscriptEntry) {
 		const job = queue.jobs.find((candidate) => candidate.savedPath === entry.path)
@@ -589,8 +581,7 @@ export default function RecentsSidebar() {
 					projectsPath={preference.projectsPath}
 					activePath={activePath}
 					activeName={queue.selectedJob?.name ?? null}
-					// Loading another transcript mid-run would fight the queue for the view.
-					disabled={queue.running}
+					transcribing={transcribing}
 					onOpen={(entry) => void open(entry)}
 					onChanged={refresh}
 					onRenamed={renamed}

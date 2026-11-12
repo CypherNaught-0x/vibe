@@ -201,5 +201,15 @@ export function useProjectPersistence(
 		[find, patch, serial],
 	)
 
-	return { persist, updateSegmentText, setSegmentSpeaker, renameJob, previewJobName, setJobSummary, setJobThread, setSpeakerName }
+	/** A saved project moved on disk (sidebar move/rename): point jobs holding it at the new place. */
+	const relocateSaved = useCallback(
+		(fromPath: string, toPath: string, mediaPath?: string) => {
+			for (const job of jobs.current) {
+				if (job.savedPath === fromPath) patch(job.id, { savedPath: toPath, ...(mediaPath && job.path ? { path: mediaPath } : {}) })
+			}
+		},
+		[jobs, patch],
+	)
+
+	return { persist, updateSegmentText, setSegmentSpeaker, renameJob, previewJobName, setJobSummary, setJobThread, setSpeakerName, relocateSaved }
 }

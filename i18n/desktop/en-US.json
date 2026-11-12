@@ -338,6 +338,7 @@
 	"transcribeTook": "Transcribed successfully in {total} seconds.",
 	"transcribed": "Transcribed",
 	"transcribing": "Transcribing...",
+	"transcribingPercent": "Transcribing · {percent}%",
 	"transcriptWillDisplayedShortly": "Transcript will be displayed here shortly...",
 	"transcription": "Transcription",
 	"translateToEnglish": "Translate To English",

@@ -3,8 +3,10 @@ import { useEffect, useState } from 'react'
 import { m } from '~/paraglide/messages.js'
 import { useSession } from '../session'
 import { useTranscriptViewOptions, type TranscriptTab } from '../hooks/use-transcript-view'
+import { runJobs } from '../hooks/viewed-jobs'
 import BatchBanner from './batch-banner'
 import FileQueue from './file-queue'
+import { JobProgressStrip } from './transcribe-progress'
 import TranscriptToolbar from './transcript-toolbar'
 import TranscriptView from './transcript-view'
 
@@ -13,7 +15,7 @@ export default function SessionView() {
 	const [query, setQuery] = useState('')
 	const [tab, setTab] = useState<TranscriptTab>('transcript')
 	const options = useTranscriptViewOptions()
-	const multiple = queue.jobs.length > 1
+	const multiple = runJobs(queue.jobs).length > 1
 	const selected = queue.selectedJob
 
 	useEffect(() => {
@@ -43,6 +45,7 @@ export default function SessionView() {
 			<div className="flex min-h-0 min-w-0 flex-1 flex-col">
 				<BatchBanner />
 				<TranscriptToolbar job={selected} query={query} setQuery={setQuery} options={options} tab={tab} setTab={setTab} />
+				{selected && <JobProgressStrip job={selected} />}
 				{selected?.transcriptDeleted && (
 					<p className="px-6 py-2 text-sm text-muted-foreground" role="status">
 						{m.privacyTranscriptDeleted()}

@@ -294,3 +294,59 @@ describe('queue run behaviour', () => {
 		expect(calls('discard_private_audio')).toHaveLength(1)
 	})
 })
+
+describe('viewing beside a run', () => {
+	const record = (name: string) => ({ version: 1, name, sourcePath: `/media/${name}.wav`, createdAt: '2026-01-01T00:00:00.000Z', segments })
+	function holdTranscription() {
+		const gate = deferred<{ segments: typeof segments }>()
+		const normal = mocks.invoke.getMockImplementation()!
+		mocks.invoke.mockImplementation((command, args) => command === 'transcribe' ? gate.promise : normal(command, args))
+		return gate
+	}
+
+	it('opens saved transcripts while a file transcribes, each replacing the last one opened', async () => {
+		const gate = holdTranscription()
+		const { result } = renderHook(useTranscribeQueue)
+		act(() => result.current.enqueue([files[0]]))
+		await waitFor(() => expect(result.current.jobs[0].status).toBe('running'))
+		act(() => { result.current.hydrate(record('Old'), '/projects/Old/transcript.vibe.json') })
+		act(() => { result.current.hydrate(record('Older'), '/projects/Older/transcript.vibe.json') })
+		expect(result.current.jobs.map((job) => job.name)).toEqual([result.current.jobs[0].name, 'Older'])
+		expect(result.current.selectedJob?.name).toBe('Older')
+		expect(result.current.running).toBe(true)
+		await act(async () => { gate.resolve({ segments }) })
+		await waitFor(() => expect(result.current.running).toBe(false))
+		expect(result.current.jobs[0].status).toBe('done')
+		expect(result.current.selectedJob?.name).toBe('Older')
+	})
+
+	it('keeps the run going when a new transcription is started, without the next file taking the view', async () => {
+		const gate = holdTranscription()
+		const { result } = renderHook(useTranscribeQueue)
+		act(() => result.current.enqueue(files))
+		await waitFor(() => expect(result.current.jobs[0].status).toBe('running'))
+		act(() => result.current.reset())
+		expect(result.current.selectedJob).toBeNull()
+		expect(result.current.jobs).toHaveLength(2)
+		expect(mocks.emit).not.toHaveBeenCalledWith('abort_transcribe')
+		await act(async () => { gate.resolve({ segments }) })
+		await finished(result)
+		expect(result.current.jobs.map((job) => job.status)).toEqual(['done', 'done'])
+		expect(result.current.selectedJob).toBeNull()
+	})
+
+	it('shows the session job when the project it is transcribing is opened again', async () => {
+		const gate = holdTranscription()
+		const { result } = renderHook(useTranscribeQueue)
+		let id: string | null = null
+		act(() => { id = result.current.hydrate({ ...record('Talk'), segments: [] }, '/projects/Talk/transcript.vibe.json', '/projects/Talk/audio.wav', 'record') })
+		act(() => result.current.transcribeJob(id!))
+		await waitFor(() => expect(result.current.jobs[0].status).toBe('running'))
+		act(() => { result.current.hydrate(record('Other'), '/projects/Other/transcript.vibe.json') })
+		act(() => { expect(result.current.hydrate(record('Talk'), '/projects/Talk/transcript.vibe.json')).toBe(id) })
+		expect(result.current.selectedId).toBe(id)
+		expect(result.current.jobs.filter((job) => job.name === 'Talk')).toHaveLength(1)
+		await act(async () => { gate.resolve({ segments }) })
+		await waitFor(() => expect(result.current.running).toBe(false))
+	})
+})

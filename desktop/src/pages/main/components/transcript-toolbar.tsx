@@ -20,6 +20,7 @@ import TranscriptExportDialog from './transcript-export-dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '~/components/ui/dropdown-menu'
 import { useSession } from '../session'
 import { useCompactToolbar } from '../hooks/use-compact-toolbar'
+import { isViewedOnly } from '../hooks/viewed-jobs'
 
 const TEXT_SIZES: { value: TranscriptTextSize; label: () => string }[] = [
 	{ value: 'sm', label: () => m.textSizeSmall() },
@@ -463,7 +464,8 @@ export default function TranscriptToolbar({
 							<ViewOptions options={options} />
 
 							<div className="ms-auto flex shrink-0 items-center gap-1">
-								{queue.running && (
+								{/* A transcript opened beside a run is not the run; its Cancel lives with the run's files. */}
+								{queue.running && !(job && isViewedOnly(job)) && (
 									<Tooltip>
 										<TooltipTrigger asChild>
 											<Button

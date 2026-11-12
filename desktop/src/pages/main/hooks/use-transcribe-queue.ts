@@ -18,6 +18,7 @@ import type { Segment, SpeakerNames, Transcript } from '~/lib/transcript'
 import type { AiThreadEntry, TranscriptRecord } from '~/lib/transcripts-store'
 import { discardPrivateAudio, isPrivateAudioPath } from '~/lib/privacy'
 import { useProjectPersistence } from './use-project-persistence'
+import { keepForNewView } from './viewed-jobs'
 export { reconcileProjectName } from './use-project-persistence'
 import type { NamedPath, ProjectSource } from '~/lib/types'
 import { ErrorModalContext } from '~/providers/error-modal'
@@ -47,6 +48,8 @@ export interface Job {
 	folder?: string | null
 	/** Origin of this newly created project. */
 	source?: ProjectSource
+	/** Opened from Recents to read or edit, not queued as part of a run. */
+	opened?: boolean
 	status: JobStatus
 	/** 0..100, only meaningful while running */
 	progress: number
@@ -103,8 +106,8 @@ export interface TranscribeQueue {
 	/** Transcribe the media already attached to a hydrated project with no transcript. */
 	transcribeJob: (jobId: string) => void
 	/**
-	 * Replace the session with a transcript loaded from the store, shown as a finished job.
-	 * `audioPath` is the media copy kept in the project folder, when it still has one; it becomes the
+	 * Show a transcript loaded from the store as a finished job, in place of the session but beside
+	 * a run in progress. `audioPath` is the media copy kept in the project folder, when it still has one; it becomes the
 	 * job's path so the player keeps working after the original file moved away.
 	 */
 	hydrate: (record: TranscriptRecord, savedPath: string, audioPath?: string | null, source?: ProjectSource) => string | null
@@ -225,7 +228,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 		[select],
 	)
 
-	const { persist, updateSegmentText, setSegmentSpeaker, renameJob, previewJobName, setJobSummary, setJobThread, setSpeakerName } = useProjectPersistence(
+	const { persist, updateSegmentText, setSegmentSpeaker, renameJob, previewJobName, setJobSummary, setJobThread, setSpeakerName, relocateSaved } = useProjectPersistence(
 		jobsRef,
 		preferenceRef,
 		patch,
@@ -579,10 +582,14 @@ export function useTranscribeQueue(): TranscribeQueue {
 	/** Load a saved transcript as the whole session: one finished job the done view can render. */
 	const hydrate = useCallback(
 		(record: TranscriptRecord, savedPath: string, audioPath?: string | null, source?: ProjectSource) => {
-			// Opening an older Recent while a run is active remains disallowed. A recording finish is
-			// different: its durable project must enter the session even if another job is running.
-			if (runningRef.current && source !== 'record') return null
-			if (!runningRef.current) discardPendingAudio()
+			pinnedRef.current = true
+			// Already in the session (say, still transcribing): show that job, not a stale copy.
+			const existing = savedPath ? jobsRef.current.find((other) => other.savedPath === savedPath) : undefined
+			if (existing) {
+				select(existing.id)
+				return existing.id
+			}
+			const kept = keepForNewView(jobsRef.current, runningRef.current)
 			const id = nextJobId()
 			const mediaPath = audioPath || record.sourcePath
 			const privateAudioPath = isPrivateAudioPath(mediaPath) ? mediaPath : undefined
@@ -594,6 +601,7 @@ export function useTranscribeQueue(): TranscribeQueue {
 				privateAudioPath,
 				transcriptDeleted: record.transcriptDeleted,
 				source,
+				opened: source !== 'record',
 				status: 'done',
 				progress: 100,
 				segments: record.segments,
@@ -603,24 +611,11 @@ export function useTranscribeQueue(): TranscribeQueue {
 				thread: record.thread,
 				speakerNames: record.speakerNames,
 			}
-			pinnedRef.current = true
-			commit(runningRef.current ? [...jobsRef.current, job] : [job])
+			commit([...kept, job])
 			select(job.id)
 			return id
 		},
-		[commit, discardPendingAudio, select],
-	)
-
-	const relocateSaved = useCallback(
-		(fromPath: string, toPath: string, mediaPath?: string) => {
-			if (!jobsRef.current.some((job) => job.savedPath === fromPath)) return
-			commit(
-				jobsRef.current.map((job) =>
-					job.savedPath === fromPath ? { ...job, savedPath: toPath, ...(mediaPath && job.path ? { path: mediaPath } : {}) } : job,
-				),
-			)
-		},
-		[commit],
+		[commit, select],
 	)
 
 	const cancelCurrent = useCallback(() => {
@@ -654,13 +649,14 @@ export function useTranscribeQueue(): TranscribeQueue {
 		)
 	}, [commit, discardPendingAudio])
 
+	/** Clear the view for a new transcription. A run in progress keeps going in the background. */
 	const reset = useCallback(() => {
-		if (runningRef.current) cancelAll()
-		discardPendingAudio()
-		pinnedRef.current = false
-		commit([])
+		const kept = keepForNewView(jobsRef.current, runningRef.current)
+		// Pinned, so the next file of the run does not pull the view away from the start screen.
+		pinnedRef.current = kept.length > 0
+		commit(kept)
 		select(null)
-	}, [cancelAll, commit, discardPendingAudio, select])
+	}, [commit, select])
 
 	const selectedJob = jobs.find((job) => job.id === selectedId) ?? null
 	const hasResults = jobs.some((job) => job.segments.length > 0 || Boolean(job.summary))
